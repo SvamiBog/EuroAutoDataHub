@@ -1,0 +1,125 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+#  Usually these files are written by a script, but you might want to ignore them
+#  even if they are committed.
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Translations
+*.mo
+*.pot
+
+# Django stuff (может быть полезно, если вдруг появится)
+*.log # Раскомментируйте, если хотите игнорировать все .log файлы
+# local_settings.py
+# db.sqlite3
+# db.sqlite3-journal
+
+# Flask stuff:
+instance/
+.webassets-cache
+
+# Scrapy stuff:
+.scrapy/
+
+# Sphinx documentation
+docs/_build/
+
+# PyBuilder
+target/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# Environments - ОЧЕНЬ ВАЖНО!
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDEs and editors
+.idea/            # Intellij Idea
+.vscode/          # Visual Studio Code
+*.project
+*.pydevproject
+*.settings
+*.tmproj
+*.sublime-workspace
+*.sublime-project
+nbproject/
+*.sw?             # Vim swap files
+
+# OS specific
+.DS_Store         # macOS
+Thumbs.db         # Windows
+ehthumbs.db       # Windows
+Desktop.ini       # Windows
+
+# Log files (общие)
+*.log
+logs/
+*.log.*
+
+# Docker - если есть файлы, которые не должны попадать в репозиторий
+# docker-compose.override.yml # Часто используется для локальных переопределений, которые не должны быть в общем репо
+
+# Sensitive information
+secrets.yml
+*.pem
+*.key
+
+# Project structure file (local only)
+project_layout.txt
