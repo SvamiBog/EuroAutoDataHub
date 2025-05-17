@@ -1,0 +1,8 @@
+# services/api_service/requirements.in
+
+fastapi
+uvicorn[standard]
+sqlalchemy
+psycopg[binary] # или psycopg
+alembic
+asyncpg
