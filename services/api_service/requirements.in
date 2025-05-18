@@ -3,6 +3,7 @@
 fastapi
 uvicorn[standard]
 sqlalchemy
-psycopg[binary] # или psycopg
+psycopg2-binary
 alembic
 asyncpg
+sqlmodel
