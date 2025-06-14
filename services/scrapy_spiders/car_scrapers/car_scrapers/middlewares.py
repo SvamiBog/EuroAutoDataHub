@@ -79,7 +79,22 @@ class CarScrapersDownloaderMiddleware:
 
     def process_response(self, request, response, spider):
         # Called with the response returned from the downloader.
-
+        
+        # Логируем 403 ошибки для мониторинга
+        if response.status == 403:
+            spider.logger.warning(f"🚫 HTTP 403 Forbidden в Downloader Middleware")
+            spider.logger.warning(f"   URL: {request.url}")
+            spider.logger.warning(f"   User-Agent: {request.headers.get('User-Agent', 'Not set')}")
+            spider.logger.warning(f"   Referer: {request.headers.get('Referer', 'Not set')}")
+            
+            # Добавляем информацию о последовательных ошибках, если spider поддерживает
+            if hasattr(spider, 'consecutive_403_count'):
+                spider.logger.warning(f"   Последовательных 403: {spider.consecutive_403_count + 1}")
+                
+        elif response.status == 200:
+            # При успешном ответе можно сбросить некоторые счетчики
+            pass
+            
         # Must either;
         # - return a Response object
         # - return a Request object

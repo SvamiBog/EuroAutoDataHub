@@ -1,0 +1,12 @@
+# Kafka
+kafka-python-ng[ujson]>=2.1.2
+# База данных
+sqlmodel==0.0.24
+psycopg2-binary==2.9.10
+SQLAlchemy==2.0.41
+# Валидация и настройки
+pydantic==2.11.4
+pydantic-settings==2.3.4 # Используем pydantic-settings
+# Для асинхронной работы с БД
+asyncpg==0.30.0
+anyio==4.9.0

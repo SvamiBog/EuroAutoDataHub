@@ -1,0 +1,1022 @@
+[
+  {
+    "name": "filter_enum_make",
+    "value": "abarth",
+    "canonical": "abarth",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "acura",
+    "canonical": "acura",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "maybach",
+    "canonical": "maybach",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "mazda",
+    "canonical": "mazda",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "mclaren",
+    "canonical": "mclaren",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "mercedes-benz",
+    "canonical": "mercedes-benz",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "mercury",
+    "canonical": "mercury",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "mg",
+    "canonical": "mg",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "microcar",
+    "canonical": "microcar",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "mini",
+    "canonical": "mini",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "mitsubishi",
+    "canonical": "mitsubishi",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "morgan",
+    "canonical": "morgan",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "austin",
+    "canonical": "austin",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "nio",
+    "canonical": "nio",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "nissan",
+    "canonical": "nissan",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "nysa",
+    "canonical": "nysa",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "oldsmobile",
+    "canonical": "oldsmobile",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "omoda",
+    "canonical": "omoda",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "opel",
+    "canonical": "opel",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "peugeot",
+    "canonical": "peugeot",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "piaggio",
+    "canonical": "piaggio",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "plymouth",
+    "canonical": "plymouth",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "polestar",
+    "canonical": "polestar",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "autobianchi",
+    "canonical": "autobianchi",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "polonez",
+    "canonical": "polonez",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "pontiac",
+    "canonical": "pontiac",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "porsche",
+    "canonical": "porsche",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "ram",
+    "canonical": "ram",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "renault",
+    "canonical": "renault",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "rivian",
+    "canonical": "rivian",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "rolls-royce",
+    "canonical": "rolls-royce",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "rover",
+    "canonical": "rover",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "saab",
+    "canonical": "saab",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "sarini",
+    "canonical": "sarini",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "avatr",
+    "canonical": "avatr",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "saturn",
+    "canonical": "saturn",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "seat",
+    "canonical": "seat",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "seres",
+    "canonical": "seres",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "shuanghuan",
+    "canonical": "shuanghuan",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "skoda",
+    "canonical": "skoda",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "skywell",
+    "canonical": "skywell",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "skyworth",
+    "canonical": "skyworth",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "smart",
+    "canonical": "smart",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "ssangyong",
+    "canonical": "ssangyong",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "subaru",
+    "canonical": "subaru",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "baic",
+    "canonical": "baic",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "suzuki",
+    "canonical": "suzuki",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "swm",
+    "canonical": "swm",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "syrena",
+    "canonical": "syrena",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "tarpan",
+    "canonical": "tarpan",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "tata",
+    "canonical": "tata",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "tesla",
+    "canonical": "tesla",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "toyota",
+    "canonical": "toyota",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "trabant",
+    "canonical": "trabant",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "triumph",
+    "canonical": "triumph",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "tuatara",
+    "canonical": "tuatara",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "baw",
+    "canonical": "baw",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "uaz",
+    "canonical": "uaz",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "vauxhall",
+    "canonical": "vauxhall",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "velex",
+    "canonical": "velex",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "volkswagen",
+    "canonical": "volkswagen",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "volvo",
+    "canonical": "volvo",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "voyah",
+    "canonical": "voyah",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "waltra",
+    "canonical": "waltra",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "warszawa",
+    "canonical": "marka_warszawa",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "wartburg",
+    "canonical": "wartburg",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "wey",
+    "canonical": "wey",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "bentley",
+    "canonical": "bentley",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "wolga",
+    "canonical": "wolga",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "xiaomi",
+    "canonical": "xiaomi",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "xpeng",
+    "canonical": "xpeng",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "zaporozec",
+    "canonical": "zaporozec",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "zastawa",
+    "canonical": "zastawa",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "zeekr",
+    "canonical": "zeekr",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "zefir",
+    "canonical": "zefir",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "zhidou",
+    "canonical": "zhidou",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "zuk",
+    "canonical": "zuk",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "bestune",
+    "canonical": "bestune",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "biro",
+    "canonical": "biro",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "bmw",
+    "canonical": "bmw",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "alpina",
+    "canonical": "alpina",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "aito",
+    "canonical": "aito",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "brilliance",
+    "canonical": "brilliance",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "bugatti",
+    "canonical": "bugatti",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "buick",
+    "canonical": "buick",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "byd",
+    "canonical": "byd",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "cadillac",
+    "canonical": "cadillac",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "casalini",
+    "canonical": "casalini",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "caterham",
+    "canonical": "caterham",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "cenntro",
+    "canonical": "cenntro",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "changan",
+    "canonical": "changan",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "chatenet",
+    "canonical": "chatenet",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "aiways",
+    "canonical": "aiways",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "chery",
+    "canonical": "chery",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "chevrolet",
+    "canonical": "chevrolet",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "chrysler",
+    "canonical": "chrysler",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "citroen",
+    "canonical": "citroen",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "cupra",
+    "canonical": "cupra",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "dacia",
+    "canonical": "dacia",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "daewoo",
+    "canonical": "daewoo",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "daihatsu",
+    "canonical": "daihatsu",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "delorean",
+    "canonical": "delorean",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "denza",
+    "canonical": "denza",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "aixam",
+    "canonical": "aixam",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "dfm",
+    "canonical": "dfm",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "dfsk",
+    "canonical": "dfsk",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "dkw",
+    "canonical": "dkw",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "dodge",
+    "canonical": "dodge",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "dongfeng",
+    "canonical": "dongfeng",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "doosan",
+    "canonical": "doosan",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "dr-motor",
+    "canonical": "dr-motor",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "ds-automobiles",
+    "canonical": "ds-automobiles",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "e-go",
+    "canonical": "e-go",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "elaris",
+    "canonical": "elaris",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "alfa-romeo",
+    "canonical": "alfa-romeo",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "faw",
+    "canonical": "faw",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "fendt",
+    "canonical": "fendt",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "ferrari",
+    "canonical": "ferrari",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "fiat",
+    "canonical": "fiat",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "fisker",
+    "canonical": "fisker",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "ford",
+    "canonical": "ford",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "forthing",
+    "canonical": "forthing",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "gaz",
+    "canonical": "gaz",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "geely",
+    "canonical": "geely",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "genesis",
+    "canonical": "genesis",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "alpine",
+    "canonical": "alpine",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "gmc",
+    "canonical": "gmc",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "gwm",
+    "canonical": "gwm",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "hiphi",
+    "canonical": "hiphi",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "honda",
+    "canonical": "honda",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "hongqi",
+    "canonical": "hongqi",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "hummer",
+    "canonical": "hummer",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "hyundai",
+    "canonical": "hyundai",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "iamelectric",
+    "canonical": "iamelectric",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "ineos",
+    "canonical": "ineos",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "infiniti",
+    "canonical": "infiniti",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "arcfox",
+    "canonical": "arcfox",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "other",
+    "canonical": "inny",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "isuzu",
+    "canonical": "isuzu",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "iveco",
+    "canonical": "iveco",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "jac",
+    "canonical": "jac",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "jaecoo",
+    "canonical": "jaecoo",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "jaguar",
+    "canonical": "jaguar",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "jeep",
+    "canonical": "jeep",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "jetour",
+    "canonical": "jetour",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "jinpeng",
+    "canonical": "jinpeng",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "kia",
+    "canonical": "kia",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "asia",
+    "canonical": "asia",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "ktm",
+    "canonical": "ktm",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "lada",
+    "canonical": "lada",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "lamborghini",
+    "canonical": "lamborghini",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "lancia",
+    "canonical": "lancia",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "land-rover",
+    "canonical": "land-rover",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "leapmotor",
+    "canonical": "leapmotor",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "levc",
+    "canonical": "levc",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "lexus",
+    "canonical": "lexus",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "li-auto",
+    "canonical": "li-auto",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "ligier",
+    "canonical": "ligier",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "aston-martin",
+    "canonical": "aston-martin",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "lincoln",
+    "canonical": "lincoln",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "lixiang",
+    "canonical": "lixiang",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "lotus",
+    "canonical": "lotus",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "lti",
+    "canonical": "lti",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "lucid",
+    "canonical": "lucid",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "lynk-and-co",
+    "canonical": "lynk-and-co",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "man",
+    "canonical": "man",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "maserati",
+    "canonical": "maserati",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "maximus",
+    "canonical": "maximus",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "maxus",
+    "canonical": "maxus",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  },
+  {
+    "name": "filter_enum_make",
+    "value": "audi",
+    "canonical": "audi",
+    "__typename": "AdvertSearchFilterAppliedValue"
+  }
+]

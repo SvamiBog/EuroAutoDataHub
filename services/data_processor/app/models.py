@@ -1,4 +1,4 @@
-# services/api_service/app/db/models.py
+# services/data_processor/app/models.py
 from datetime import datetime
 from sqlalchemy import Column, DateTime
 from typing import List, Optional

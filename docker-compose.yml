@@ -2,18 +2,151 @@
 version: '3.8'
 
 services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.3.2 # Используйте актуальную версию
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+
+  kafka_broker:
+    image: confluentinc/cp-kafka:7.3.2 # Используйте актуальную версию
+    container_name: kafka_broker
+    depends_on:
+      - zookeeper
+    ports:
+      # Порт для доступа с хост-машины (если Scrapy запускается с хоста)
+      - "9094:9094"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
+      # Адрес, который Kafka будет анонсировать клиентам ВНУТРИ Docker сети
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka_broker:9092,PLAINTEXT_HOST://localhost:9094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_CREATE_TOPICS: "parsed_car_ads:1:1,active_car_ids:1:1"
+
   db_postgres:
     image: postgres:15-alpine
     container_name: euroautodatahub_postgres_db
     ports:
       - "5433:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data # Сохраняет данные БД между перезапусками контейнера
+      - postgres_data:/var/lib/postgresql/data
     environment:
-      - POSTGRES_USER=${POSTGRES_USER:-max}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-1234}
-      - POSTGRES_DB=${POSTGRES_DB:-euroautodatahub_db}
+      # Используем переменные из .env файла
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
     restart: unless-stopped
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  data_processor:
+    build:
+      context: .
+      dockerfile: ./services/data_processor/Dockerfile
+    container_name: data_processor_service
+    restart: on-failure
+    depends_on:
+      db_postgres:
+        condition: service_healthy
+      kafka_broker:
+        condition: service_started
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_SERVER=db_postgres
+      - POSTGRES_PORT=5432
+      - KAFKA_BOOTSTRAP_SERVERS=kafka_broker:9092
+      - KAFKA_TOPIC_ADS=parsed_car_ads
+      - KAFKA_CONSUMER_GROUP=ad-processor-group
+    volumes:
+      - ./services/data_processor/app:/app/app
+      - ./services/api_service/app/db/models.py:/app/app/models.py
+
+  status_updater:
+    build:
+      context: .
+      dockerfile: ./services/data_processor/Dockerfile
+    container_name: status_updater_service
+    command: python -m app.status_consumer
+    restart: on-failure
+    depends_on:
+      db_postgres:
+        condition: service_healthy
+      kafka_broker:
+        condition: service_started
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_SERVER=db_postgres
+      - POSTGRES_PORT=5432
+      - KAFKA_BOOTSTRAP_SERVERS=kafka_broker:9092
+      - KAFKA_TOPIC_ADS=parsed_car_ads
+      - KAFKA_CONSUMER_GROUP=ad-processor-group
+    volumes:
+      - ./services/data_processor/app:/app/app
+      - ./services/api_service/app/db/models.py:/app/app/models.py
+
+  scrapy_runner:
+    build:
+      context: ./services/scrapy_spiders/car_scrapers
+      dockerfile: Dockerfile
+    container_name: scrapy_runner_service
+    depends_on:
+      - kafka_broker
+    volumes:
+      - ./services/scrapy_spiders/car_scrapers/car_scrapers:/usr/src/app/car_scrapers
+
+  api_service:
+    build:
+      context: ./services/api_service
+      dockerfile: Dockerfile
+    container_name: api_service_app
+    ports:
+      - "8000:8000"
+    depends_on:
+      db_postgres:
+        condition: service_healthy
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_SERVER=db_postgres
+      - POSTGRES_PORT=5432
+    volumes:
+      - ./services/api_service:/app
+    working_dir: /app
+    restart: unless-stopped
+
+  api_migrations:
+    build:
+      context: ./services/api_service
+      dockerfile: Dockerfile
+    container_name: api_service_migrations
+    depends_on:
+      db_postgres:
+        condition: service_healthy
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_SERVER=db_postgres
+      - POSTGRES_PORT=5432
+    volumes:
+      - ./services/api_service:/app
+    working_dir: /app
+    command: alembic upgrade head
 
 volumes:
   postgres_data:
