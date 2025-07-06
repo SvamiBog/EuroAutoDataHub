@@ -418,7 +418,7 @@ class OtomotoSpider(scrapy.Spider):
             
             # Отправляем ActiveIdsItem
             active_ids_item = ActiveIdsItem(
-                source_name=self.name,
+                source_name="otomoto.pl",  # Используем то же имя, что и для обычных объявлений
                 make_str=self.current_make_name,
                 ad_ids=list(self.current_make_active_ids)
             )

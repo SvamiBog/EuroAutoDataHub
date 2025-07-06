@@ -20,8 +20,11 @@ async def update_sold_ads(session: AsyncSession, active_data: ActiveIdsSchema):
     make_str = active_data.make_str
     active_ids_from_kafka = active_data.ad_ids
 
-    logger.info(f"Начинаем проверку неактивных объявлений для источника: {source}, марка: {make_str}. "
-                f"Получено {len(active_ids_from_kafka)} активных ID.")
+    logger.info(f"=== НАЧАЛО ПРОВЕРКИ НЕАКТИВНЫХ ОБЪЯВЛЕНИЙ ===")
+    logger.info(f"Источник: {source}")
+    logger.info(f"Марка из Kafka: '{make_str}'")
+    logger.info(f"Получено {len(active_ids_from_kafka)} активных ID из Kafka.")
+    logger.info(f"Примеры активных ID из Kafka: {list(active_ids_from_kafka)[:5]}")
 
     # 1. Получаем из БД только ID для данного источника и марки, которые еще не помечены как проданные.
     query = (
@@ -38,8 +41,21 @@ async def update_sold_ads(session: AsyncSession, active_data: ActiveIdsSchema):
     logger.info(f"В базе найдено {len(db_ids_set)} активных объявлений марки '{make_str}' для {source}.")
 
     # 2. Находим разницу. Это и будут ID объявлений данной марки, которые нужно пометить как проданные.
+    # Приведение типов
+    db_ids_set = set(map(str, db_ids))
+    active_ids_from_kafka = set(map(str, active_data.ad_ids))
     sold_ids = db_ids_set - active_ids_from_kafka
 
+    # РАСШИРЕННОЕ ЛОГИРОВАНИЕ ДЛЯ ДИАГНОСТИКИ
+    logger.info(f"=== ДИАГНОСТИКА ДЛЯ МАРКИ '{make_str}' ===")
+    logger.info(f"Источник: {source}")
+    logger.info(f"Примеры ID из БД (первые 5): {list(db_ids_set)[:5]}")
+    logger.info(f"Примеры ID из Kafka (первые 5): {list(active_ids_from_kafka)[:5]}")
+    logger.info(f"Всего ID в БД: {len(db_ids_set)}")
+    logger.info(f"Всего ID из Kafka: {len(active_ids_from_kafka)}")
+    logger.info(f"ID для пометки как проданные (первые 5): {list(sold_ids)[:5]}")
+    logger.info(f"Общее количество ID для пометки как проданные: {len(sold_ids)}")
+    
     if not sold_ids:
         logger.info(f"Неактивные объявления марки '{make_str}' для {source} не найдены. Работа завершена.")
         return
@@ -61,6 +77,27 @@ async def update_sold_ads(session: AsyncSession, active_data: ActiveIdsSchema):
     update_result = await session.execute(update_query)
     updated_count = update_result.rowcount
 
+    logger.info(f"=== РЕЗУЛЬТАТ ОБНОВЛЕНИЯ ===")
+    logger.info(f"Попытались обновить {len(sold_ids)} объявлений марки '{make_str}'.")
+    logger.info(f"Фактически обновлено {updated_count} объявлений марки '{make_str}'.")
+    
+    if updated_count != len(sold_ids):
+        logger.warning(f"ВНИМАНИЕ: Ожидали обновить {len(sold_ids)} объявлений, но обновили только {updated_count}!")
+        logger.warning(f"Возможные причины: ID не найдены в БД, уже помечены как проданные, или не совпадает источник.")
+        
+        # Дополнительная диагностика: проверяем, какие именно ID не были обновлены
+        if len(sold_ids) > 0:
+            check_query = (
+                select(AutoAd.id_ad, AutoAd.sold_at, AutoAd.source_name, AutoAd.make_name)
+                .where(AutoAd.id_ad.in_(list(sold_ids)[:10]))  # Проверяем первые 10 ID
+            )
+            check_result = await session.execute(check_query)
+            found_ads = check_result.fetchall()
+            
+            logger.info(f"Проверка первых {min(10, len(sold_ids))} ID:")
+            for ad in found_ads:
+                logger.info(f"  ID: {ad.id_ad}, sold_at: {ad.sold_at}, source: {ad.source_name}, make: {ad.make_name}")
+    
     logger.info(f"Обновлено {updated_count} объявлений марки '{make_str}'.")
 
     if updated_count > 0:
@@ -92,8 +129,10 @@ async def update_sold_ads(session: AsyncSession, active_data: ActiveIdsSchema):
 
         if history_entries_to_add:
             session.add_all(history_entries_to_add)
-
-        logger.info(f"Успешно обновлено {updated_count} объявлений марки '{make_str}'.")
+            await session.commit()
+            logger.info(f"Успешно обновлено {updated_count} объявлений марки '{make_str}'.")
+        else:
+            logger.warning(f"Не удалось добавить записи в историю для марки '{make_str}'.")
     else:
         logger.warning(f"Не удалось обновить ни одного объявления марки '{make_str}'. Возможно, ID не найдены в БД.")
 
