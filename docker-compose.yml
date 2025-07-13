@@ -100,13 +100,30 @@ services:
 
   scrapy_runner:
     build:
-      context: ./services/scrapy_spiders/car_scrapers
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./services/scrapy_spiders/car_scrapers/Dockerfile
     container_name: scrapy_runner_service
     depends_on:
-      - kafka_broker
+      db_postgres:
+        condition: service_healthy
+      kafka_broker:
+        condition: service_started
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_SERVER=db_postgres
+      - POSTGRES_PORT=5432
+      - KAFKA_BOOTSTRAP_SERVERS=kafka_broker:9092
+      # Добавляем PYTHONPATH
+      - PYTHONPATH=/usr/src/app:/usr/src/data_processor
     volumes:
       - ./services/scrapy_spiders/car_scrapers/car_scrapers:/usr/src/app/car_scrapers
+      - ./services/data_processor:/usr/src/data_processor
+      - ./services/api_service/app/db/models.py:/usr/src/data_processor/app/models.py
+    # Добавляем это:
+    env_file:
+      - .env
 
   api_service:
     build:

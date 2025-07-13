@@ -6,6 +6,8 @@ import sys
 
 from kafka import KafkaConsumer
 from pydantic import ValidationError
+from sqlalchemy.exc import IntegrityError, DatabaseError
+from asyncpg.exceptions import UniqueViolationError
 
 from app.core.config import settings
 from app.db_session import get_session
@@ -44,8 +46,16 @@ async def main():
         except ValidationError as e:
             logger.error(f"Ошибка валидации данных: {e.errors()}")
             logger.error(f"Проблемное сообщение: {message.value}")
+            # TODO: Отправить в DLQ (Dead Letter Queue)
+        except (IntegrityError, UniqueViolationError) as e:
+            logger.warning(f"Дублирующиеся данные (возможно, повторная обработка): {e}")
+            # Это нормально для idempotent операций
+        except DatabaseError as e:
+            logger.error(f"Ошибка базы данных: {e}")
+            # TODO: Реализовать retry логику
         except Exception as e:
             logger.exception(f"Произошла непредвиденная ошибка при обработке сообщения: {e}")
+            # TODO: Отправить в DLQ
 
 
 if __name__ == "__main__":

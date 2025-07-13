@@ -1,2 +1,4 @@
-Scrapy>=2.11.0
+# services/scrapy_spiders/car_scrapers/requirements.txt
+scrapy>=2.11.0
 kafka-python-ng[ujson]>=2.1.2
+requests>=2.31.0

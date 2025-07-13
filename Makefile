@@ -41,8 +41,8 @@ run-oto-local:
 	@cd $(SCRAPY_DIR) && uv run scrapy crawl otomoto
 
 run-oto-docker:
-	@echo "--- Перехожу в $(SCRAPY_DIR) и запускаю Scrapy Docker ---"
-	@cd $(SCRAPY_DIR) && docker-compose run --rm scrapy_runner scrapy crawl otomoto
+	@echo "--- Запуск Scrapy через главный docker-compose ---"
+	docker-compose run --rm scrapy_runner scrapy crawl otomoto
 
 # Логи сервисов
 logs-processor:
@@ -82,6 +82,13 @@ db-revision:
 status:
 	@echo "--- Статус всех сервисов ---"
 	uv run docker-compose ps
+
+# Основная команда для pytest
+.PHONY: test test-pytest test-unittest test-verbose test-coverage
+test:
+	@echo "--- 🚀 Запуск всех тестов через pytest ---"
+	PYTHONPATH=. uv run pytest services/ -v
+
 
 # Помощь
 help:

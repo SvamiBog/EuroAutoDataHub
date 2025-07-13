@@ -8,6 +8,7 @@ import urllib.parse as up
 from collections import OrderedDict
 from datetime import datetime, timezone
 from ..items import ParsedAdItem, ActiveIdsItem
+from ..utils.make_loader import MakeLoader
 import os
 
 
@@ -60,11 +61,14 @@ class OtomotoSpider(scrapy.Spider):
 
         self.scraped_ids = set()
         
-        # Загружаем список марок из файла
-        self.makes_list = self._load_makes_from_file()
+        # Загружаем список марок
+        make_loader = MakeLoader(self.logger)
+        self.makes_list = make_loader.get_makes()
         self.current_make_index = 0
         self.current_make_name = None
         self.current_make_active_ids = set()
+
+        self.logger.info(f"Загружено {len(self.makes_list)} марок для парсинга")
         
         # Для отслеживания состояния
         self.current_make_total_pages = 0
@@ -92,53 +96,6 @@ class OtomotoSpider(scrapy.Spider):
         
         self.logger.info(f"Загружено {len(self.makes_list)} марок для парсинга")
 
-    def _load_makes_from_file(self):
-        """Загружает список марок из файла make_car.json"""
-        try:
-            # Проверяем разные возможные пути
-            possible_paths = [
-                '/usr/src/make_car.json',  # Docker путь
-                'make_car.json',  # Относительный путь
-                os.path.join(os.getcwd(), 'make_car.json'),  # Текущая директория
-                # Путь от корня проекта
-                os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), 'make_car.json')
-            ]
-            
-            makes_file_path = None
-            for path in possible_paths:
-                if os.path.exists(path):
-                    makes_file_path = path
-                    break
-            
-            if not makes_file_path:
-                self.logger.error(f"Файл make_car.json не найден в путях: {possible_paths}")
-                return []
-            
-            self.logger.info(f"Загружаем марки из файла: {makes_file_path}")
-            
-            with open(makes_file_path, 'r', encoding='utf-8') as f:
-                makes_data = json.load(f)
-
-            # Извлекаем только названия марок
-            if isinstance(makes_data, list):
-                makes = []
-                for make_item in makes_data:
-                    if isinstance(make_item, dict):
-                        make_value = make_item.get('value') or make_item.get('name') or make_item.get('make')
-                        if make_value:
-                            makes.append(make_value.lower())
-                    elif isinstance(make_item, str):
-                        makes.append(make_item.lower())
-                return makes
-            elif isinstance(makes_data, dict):
-                return [str(v).lower() for v in makes_data.values()]
-            else:
-                self.logger.error(f"Неожиданная структура файла make_car.json: {type(makes_data)}")
-                return []
-
-        except Exception as e:
-            self.logger.error(f"Ошибка при загрузке make_car.json: {e}")
-            return []
 
     def start_requests(self):
         """Стандартный метод Scrapy для начала парсинга"""

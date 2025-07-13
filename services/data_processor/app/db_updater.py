@@ -24,7 +24,6 @@ async def update_sold_ads(session: AsyncSession, active_data: ActiveIdsSchema):
     logger.info(f"Источник: {source}")
     logger.info(f"Марка из Kafka: '{make_str}'")
     logger.info(f"Получено {len(active_ids_from_kafka)} активных ID из Kafka.")
-    logger.info(f"Примеры активных ID из Kafka: {list(active_ids_from_kafka)[:5]}")
 
     # 1. Получаем из БД только ID для данного источника и марки, которые еще не помечены как проданные.
     query = (
@@ -49,11 +48,8 @@ async def update_sold_ads(session: AsyncSession, active_data: ActiveIdsSchema):
     # РАСШИРЕННОЕ ЛОГИРОВАНИЕ ДЛЯ ДИАГНОСТИКИ
     logger.info(f"=== ДИАГНОСТИКА ДЛЯ МАРКИ '{make_str}' ===")
     logger.info(f"Источник: {source}")
-    logger.info(f"Примеры ID из БД (первые 5): {list(db_ids_set)[:5]}")
-    logger.info(f"Примеры ID из Kafka (первые 5): {list(active_ids_from_kafka)[:5]}")
     logger.info(f"Всего ID в БД: {len(db_ids_set)}")
     logger.info(f"Всего ID из Kafka: {len(active_ids_from_kafka)}")
-    logger.info(f"ID для пометки как проданные (первые 5): {list(sold_ids)[:5]}")
     logger.info(f"Общее количество ID для пометки как проданные: {len(sold_ids)}")
     
     if not sold_ids:

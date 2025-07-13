@@ -17,7 +17,6 @@ logging.basicConfig(stream=sys.stdout, level=logging.INFO,
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# --- ВАЖНО: Укажите новый топик и группу консьюмеров в .env или здесь ---
 KAFKA_TOPIC_ACTIVE_IDS = "active_car_ids"
 KAFKA_CONSUMER_GROUP_STATUS = "status-updater-group"
 
@@ -51,7 +50,7 @@ async def main():
             async with session_generator as session:
                 # Вызываем функцию обновления
                 await update_sold_ads(session, active_data)
-                await session.commit()  # Убедимся, что изменения сохранены
+                await session.commit()
                 
                 logger.info(f"Успешно обработана марка {active_data.make_str}")
 

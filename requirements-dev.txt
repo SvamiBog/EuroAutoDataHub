@@ -1,0 +1,16 @@
+# Зависимости для локального запуска тестов и разработки
+
+# Scrapy зависимости
+scrapy>=2.11.0
+scrapy-kafka-export
+
+# Data processor зависимости  
+sqlalchemy[asyncio]>=2.0.0
+asyncpg>=0.29.0
+pydantic>=2.0.0
+python-dotenv>=1.0.0
+alembic>=1.12.0
+
+# Дополнительные зависимости для тестов
+requests
+lxml

@@ -46,15 +46,42 @@ class ParsedAdItem(scrapy.Item):
     image_urls = scrapy.Field()  # List[str]: Список URL изображений
 
     # --- Поля для логики пайплайнов (не для прямой записи в AutoAd) ---
-    # Эти поля могут использоваться для передачи дополнительной информации
-    # между стадиями обработки, например, для определения, новое ли это объявление
-    # или существующее, которое нужно обновить.
-    # Пример:
-    # is_new_ad = scrapy.Field() # bool
-    # needs_update = scrapy.Field() # bool
+    # Вы можете решить, как их структурировать. Например, в виде словаря:
+    pipeline_meta = scrapy.Field()  # dict: {'is_new': True, 'price_changed': True, 'old_price': 10000, 'new_price': 9500, 'check_sold': False}
+    # или оставить отдельные поля, если вам так удобнее
+    # is_highlighted = scrapy.Field() # Если эта информация важна и вы ее парсите
+    # is_promoted = scrapy.Field()
 
+class CarAdItem(scrapy.Item):
+    # Основная информация об объявлении
+    ad_id = scrapy.Field()
+    url = scrapy.Field()
+    title = scrapy.Field()
+    short_description = scrapy.Field()
+    created_at = scrapy.Field()
+    
+    # Цена
+    price = scrapy.Field()
+    currency = scrapy.Field()
+    
+    # Технические характеристики
+    make = scrapy.Field()
+    model = scrapy.Field()
+    year = scrapy.Field()
+    mileage = scrapy.Field()
+    fuel_type = scrapy.Field()
+    engine_capacity = scrapy.Field()
+    
+    # Местоположение
+    city = scrapy.Field()
+    region = scrapy.Field()
+    
+    # Фото
+    photo_url = scrapy.Field()
 
 class ActiveIdsItem(scrapy.Item):
+    make_str = scrapy.Field()
+    active_ids = scrapy.Field()
+    timestamp = scrapy.Field()
     source_name = scrapy.Field()
-    ad_ids = scrapy.Field() # list of ad IDs
-    make_str = scrapy.Field()  # str: Марка
+    ad_ids = scrapy.Field()
