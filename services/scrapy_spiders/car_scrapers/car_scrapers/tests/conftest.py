@@ -6,35 +6,31 @@ from scrapy.http import Request, TextResponse
 from ..spiders.otomoto import OtomotoSpider
 
 
-@pytest.fixture
-def mock_make_loader():
-    """Фикстура для мокирования MakeLoader."""
-    with patch('car_scrapers.spiders.otomoto.MakeLoader') as mock:
-        # Настраиваем поведение мока
-        mock_instance = mock.return_value
-        mock_instance.get_makes.return_value = [
-            'audi',
-            'bmw',
-            'mercedes-benz',
-            'opel',
-            'volkswagen'
-            ]
-        yield mock_instance
-
 
 @pytest.fixture
 def simple_spider():
-    """Простая фикстура спайдера без reactor (для БД)."""
-    spider = OtomotoSpider()
-    spider.logger = MagicMock()
-    spider.makes_list = ['audi', 'bmw', 'mercedes-benz']
+    # Мокаем make_loader, чтобы не зависеть от реальных данных
+    with patch('car_scrapers.spiders.otomoto.MakeLoader') as mock_loader_class:
+        mock_loader = mock_loader_class.return_value
+        mock_loader.get_makes.return_value = ['audi', 'bmw', 'mercedes-benz']
+        
+        spider = OtomotoSpider()
+
+        return spider
+
+
+@pytest.fixture
+def mock_spider():
+    """Полностью замоканный spider для изолированного тестирования."""
+    spider = MagicMock(spec=OtomotoSpider)
+    spider.name = 'otomoto'
+    spider.allowed_domains = ['otomoto.pl']
+    spider.make_list = ['audi', 'bmw', 'mercedes-benz']
     spider.current_make_index = 0
-    spider.scraped_ids = set()
-    spider.current_make_active_ids = set()
     spider.max_consecutive_403 = 3
     spider.pause_duration = 300
-    spider.consecutive_403_count = 0
-
+    spider.scraped_ids = set()
+    spider.BASE_URL = 'https://www.otomoto.pl/graphql'
     return spider
 
 

@@ -84,10 +84,30 @@ status:
 	uv run docker-compose ps
 
 # Основная команда для pytest
-.PHONY: test test-pytest test-unittest test-verbose test-coverage
+.PHONY: test test-pytest test-unittest test-verbose test-coverage test-warnings
 test:
 	@echo "--- 🚀 Запуск всех тестов через pytest ---"
-	PYTHONPATH=. uv run pytest services/ -v
+	PYTHONPATH=. uv run pytest services/ -v 
+
+test-warnings:
+	@echo "--- 🚨 Запуск тестов с показом предупреждений ---"
+	PYTHONPATH=. uv run pytest services/ -v -s --tb=short
+
+test-strict:
+	@echo "--- 🚫 Запуск тестов с ошибками на предупреждения ---"
+	PYTHONPATH=. uv run pytest services/ -v -W error::DeprecationWarning
+
+test-coverage:
+	@echo "--- 📊 Запуск тестов с покрытием ---"
+	PYTHONPATH=. uv run pytest services/ -v --cov=services --cov-report=html
+
+test-quiet:
+	@echo "--- 🤫 Запуск тестов без предупреждений ---"
+	PYTHONPATH=. uv run pytest services/ -v --disable-warnings
+
+test-verbose:
+	@echo "--- 📝 Подробный запуск тестов ---"
+	PYTHONPATH=. uv run pytest services/ -vv -s --tb=long
 
 
 # Помощь
@@ -116,3 +136,11 @@ help:
 	@echo "База данных:"
 	@echo "  db-upgrade         - Применение миграций"
 	@echo "  db-revision        - Создание новой миграции"
+	@echo ""
+	@echo "Тестирование:"
+	@echo "  test               - Запуск всех тестов"
+	@echo "  test-warnings      - Запуск тестов с показом предупреждений"
+	@echo "  test-quiet         - Запуск тестов без предупреждений"
+	@echo "  test-strict        - Запуск тестов с ошибками на предупреждения"
+	@echo "  test-verbose       - Подробный запуск тестов"
+	@echo "  test-coverage      - Запуск тестов с покрытием кода"

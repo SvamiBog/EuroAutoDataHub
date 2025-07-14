@@ -1,7 +1,7 @@
 # services/data_processor/app/schemas.py
 from datetime import datetime
 from typing import Optional, List, Set
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class ScrapedAdSchema(BaseModel):
@@ -44,9 +44,10 @@ class ScrapedAdSchema(BaseModel):
     seller_link: Optional[str] = Field(None, alias="sellerLink")
     image_urls: Optional[List[str]] = []
 
-    class Config:
-        populate_by_name = True
-        from_attributes = True
+    model_config = ConfigDict(
+        populate_by_name=True,
+        from_attributes=True
+    )
 
 
 class ActiveIdsSchema(BaseModel):

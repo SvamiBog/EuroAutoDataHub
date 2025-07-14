@@ -11,12 +11,6 @@ from services.scrapy_spiders.car_scrapers.car_scrapers.spiders.otomoto import Ot
 
 
 # === ПРОСТЫЕ ТЕСТЫ БЕЗ REACTOR ===
-
-def test_simple_math():
-    """Самый простой тест - проверим, что pytest работает."""
-    assert 2 + 2 == 4
-
-
 class TestOtomotoSpiderBasics:
     """Базовые тесты спайдера без использования reactor."""
 
