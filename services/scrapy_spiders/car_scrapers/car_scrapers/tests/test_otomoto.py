@@ -24,7 +24,12 @@ class TestOtomotoSpiderBasics:
 
     def test_makes_list_loaded(self, simple_spider):
         """Тест: Проверяем загрузку списка марок."""
-        assert simple_spider.makes_list == ['audi', 'bmw', 'mercedes-benz']
+        assert simple_spider.makes_list == ['audi', 'bmw', 'mercedes-benz', 'opel', 'volkswagen']
+
+    def test_makes_with_empty_list(self, simple_with_empty_spider):
+        """Тест: Проверяем работу спайдера с пустым списком марок."""
+        assert simple_with_empty_spider.makes_list == []
+        assert simple_with_empty_spider.current_make_index == 0
 
     def test_spider_initial_state(self, simple_spider):
         """Тест: Проверяем начальное состояние спайдера."""

@@ -12,7 +12,19 @@ def simple_spider():
     # Мокаем make_loader, чтобы не зависеть от реальных данных
     with patch('car_scrapers.spiders.otomoto.MakeLoader') as mock_loader_class:
         mock_loader = mock_loader_class.return_value
-        mock_loader.get_makes.return_value = ['audi', 'bmw', 'mercedes-benz']
+        mock_loader.get_makes.return_value = ['audi', 'bmw', 'mercedes-benz', 'opel', 'volkswagen']
+        
+        spider = OtomotoSpider()
+
+        return spider
+
+
+@pytest.fixture   
+def simple_with_empty_spider():
+    """Спайдер с пустым списком марок для тестирования граничных случаев."""
+    with patch('car_scrapers.spiders.otomoto.MakeLoader') as mock_loader_class:
+        mock_loader = mock_loader_class.return_value
+        mock_loader.get_makes.return_value = []
         
         spider = OtomotoSpider()
 

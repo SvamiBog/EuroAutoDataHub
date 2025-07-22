@@ -18,7 +18,7 @@ dc-restart:
 dc-rebuild:
 	@echo "--- Остановка, удаление, пересборка и запуск всех сервисов ---"
 	uv run docker-compose down
-	uv run docker-compose build --no-cache
+	uv run docker-compose build
 	uv run docker-compose up -d
 
 dc-rebuild-service:

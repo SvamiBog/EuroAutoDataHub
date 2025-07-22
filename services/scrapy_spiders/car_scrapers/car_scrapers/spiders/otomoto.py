@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+from rich.console import Console
+from rich.progress import Progress, TaskID, BarColumn, TextColumn, TimeRemainingColumn
+from rich.live import Live
+from rich.table import Table
+
 import json
 import math
+import time
 import scrapy
 import urllib.parse as up
 from collections import OrderedDict
 from datetime import datetime, timezone
 from ..items import ParsedAdItem, ActiveIdsItem
 from ..utils.make_loader import MakeLoader
-import os
 
 
 class OtomotoSpider(scrapy.Spider):
@@ -68,6 +73,31 @@ class OtomotoSpider(scrapy.Spider):
         self.current_make_name = None
         self.current_make_active_ids = set()
 
+
+        # Добавляем статистику для Rich
+        self.stats_start_time = time.time()
+        self.last_stats_update = time.time()
+        self.stats_update_interval = 5
+        
+        # Rich Progress Bar с дополнительной статистикой
+        self.console = Console()
+        self.progress = Progress(
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(bar_width=30),
+            TextColumn("[progress.percentage]{task.percentage:>3.1f}%"),
+            TextColumn("•"),
+            TextColumn("{task.completed}/{task.total}"),
+            TextColumn("•"),
+            TimeRemainingColumn(),
+            console=self.console,
+            refresh_per_second=4
+        )
+
+        self.main_task: Optional[TaskID] = None
+        self.stats_task: Optional[TaskID] = None
+        self.current_make_task: Optional[TaskID] = None
+        self.progress_live: Optional[Live] = None
+
         self.logger.info(f"Загружено {len(self.makes_list)} марок для парсинга")
         
         # Для отслеживания состояния
@@ -102,16 +132,82 @@ class OtomotoSpider(scrapy.Spider):
         if not self.makes_list:
             self.logger.error("Список марок пуст, парсинг невозможен")
             return
+
+        # Запускаем Rich Progress Bar
+        self._start_progress_bar()
         
         # Запускаем первую марку
         request = self._get_request_for_current_make()
         if request:
             yield request
 
+
+    def _start_progress_bar(self):
+        """Запускает Rich Progress Bar для отслеживания прогресса"""
+        self.progress_live = Live(self.progress, console=self.console, refresh_per_second=4)
+        self.progress_live.start()
+
+        # Основная задача - прогресс по маркам
+        self.main_task = self.progress.add_task(
+            "[green]Общий прогресс парсинга",
+            total=len(self.makes_list),
+        )
+        
+        # Задача для статистики Scrapy
+        self.stats_task = self.progress.add_task(
+            "[cyan]📊 Статистика",
+            total=100,  # Процентный прогресс не нужен для статистики
+            visible=True
+        )
+        
+        # Запускаем обновление статистики
+        self._update_scrapy_stats()
+
+    
+    def _update_scrapy_stats(self):
+        """Обновляет статистику Scrapy в Rich прогресс-баре"""
+        if self.stats_task is not None and hasattr(self, 'crawler'):
+            stats = self.crawler.stats
+            
+            # Получаем текущую статистику
+            pages_crawled = stats.get_value('response_received_count', 0)
+            items_scraped = stats.get_value('item_scraped_count', 0)
+            
+            # Вычисляем скорость
+            current_time = time.time()
+            elapsed_time = current_time - self.stats_start_time
+            
+            if elapsed_time > 0:
+                pages_per_min = (pages_crawled / elapsed_time) * 60
+                items_per_min = (items_scraped / elapsed_time) * 60
+            else:
+                pages_per_min = 0
+                items_per_min = 0
+            
+            # Форматируем время работы
+            elapsed_str = time.strftime('%H:%M:%S', time.gmtime(elapsed_time))
+            
+            # Обновляем описание статистики
+            stats_description = (
+                f"[cyan]📊[/cyan] Обработано: [bold]{pages_crawled}[/bold] стр "
+                f"([bold]{pages_per_min:.0f}[/bold]/мин) • "
+                f"Собрано: [bold]{items_scraped}[/bold] объявлений "
+                f"([bold]{items_per_min:.0f}[/bold]/мин) • "
+                f"Время: [bold]{elapsed_str}[/bold]"
+            )
+            
+            self.progress.update(
+                self.stats_task,
+                completed=50,  # Фиксированное значение для отображения
+                description=stats_description
+            )
+        
+
     def _get_request_for_current_make(self):
         """Создает запрос для парсинга текущей марки"""
         if self.current_make_index >= len(self.makes_list):
             self.logger.info("Все марки обработаны")
+            self._stop_progress_bar()
             return None
         
         # Устанавливаем текущую марку
@@ -121,6 +217,23 @@ class OtomotoSpider(scrapy.Spider):
         self.current_make_processed_pages = 0
         self.make_completion_lock = False
         
+        # Обновляем основной прогресс
+        if self.main_task is not None:
+            self.progress.update(
+                self.main_task,
+                completed=self.current_make_index,
+                description=f"[green]Парсинг марки: [bold cyan]{self.current_make_name}[/bold cyan]",
+            )
+
+        # Создаем задачу для текущей марки
+        if self.current_make_task is not None:
+            self.progress.remove_task(self.current_make_task)
+
+        self.current_make_task = self.progress.add_task(
+            f"[yellow]{self.current_make_name}[/yellow] - инициализация...",
+            total = None
+        )
+
         self.logger.info(f"Начинаем парсинг марки: {self.current_make_name} ({self.current_make_index + 1}/{len(self.makes_list)})")
         
         # Обновляем фильтры для текущей марки
@@ -190,7 +303,6 @@ class OtomotoSpider(scrapy.Spider):
         # Если запрос успешен, сбрасываем счетчик 403 ошибок
         self._reset_403_counter_on_success()
         
-        # ...existing code для parse_initial...
         try:
             data = json.loads(response.text)
         except json.JSONDecodeError:
@@ -217,9 +329,33 @@ class OtomotoSpider(scrapy.Spider):
 
         total_ads = advert_search_data.get('totalCount', 0)
         self.current_make_total_pages = math.ceil(total_ads / self.ITEMS_PER_PAGE)
+
+        # Обновляем задачу текущей марки
+        if self.current_make_task is not None:
+            if total_ads > 0:
+                self.progress.update(
+                    self.current_make_task,
+                    total=self.current_make_total_pages,
+                    completed=0,
+                    description=f"[yellow]{self.current_make_name}[/yellow] - {total_ads} объявлений"
+                )
+            else:
+                # Обработка случая с 0 объявлениями
+                self.progress.update(
+                    self.current_make_task,
+                    total=1,
+                    completed=0,
+                    description=f"[yellow]{self.current_make_name}[/yellow] - нет объявлений"
+                )
+        
         self.logger.info(f"Марка {self.current_make_name}: найдено {total_ads} объявлений, страниц: {self.current_make_total_pages}")
 
-        # Парсим первую страницу
+        # Если нет объявлений, сразу завершаем марку
+        if total_ads == 0:
+            yield from self._handle_make_completion()
+            return
+
+        # Парсим первую страницу только если есть объявления
         yield from self.parse_page(response, response.meta)
 
         # Запросы на остальные страницы
@@ -229,12 +365,18 @@ class OtomotoSpider(scrapy.Spider):
                 callback=self.parse_page,
                 meta={'page_num': page_num, 'handle_httpstatus_list': [403], 'make_name': self.current_make_name}
             )
+            
 
     def parse_page(self, response, meta=None):
         """Парсит страницу с объявлениями"""
         current_meta = meta if meta else response.meta
         page_num = current_meta.get('page_num', 1)
         make_name = current_meta.get('make_name', self.current_make_name)
+
+        current_time = time.time()
+        if current_time - self.last_stats_update >= self.stats_update_interval:
+            self._update_scrapy_stats()
+            self.last_stats_update = current_time
 
         # Проверяем, не на паузе ли мы
         if self.is_paused:
@@ -280,7 +422,10 @@ class OtomotoSpider(scrapy.Spider):
             return
 
         edges = advert_search_data.get('edges', [])
-        self.logger.info(f"Марка {make_name}, страница {page_num}: найдено {len(edges)} объявлений")
+
+        # Обычный лог только для значимых событий
+        if page_num % 10 == 1 or page_num == self.current_make_total_pages:  # Каждая 10-я страница или последняя
+            self.logger.info(f"Марка {make_name}, страница {page_num}: найдено {len(edges)} объявлений")
 
         for edge in edges:
             node = edge.get('node', {})
@@ -359,20 +504,66 @@ class OtomotoSpider(scrapy.Spider):
         # Отмечаем завершение обработки страницы
         yield from self._handle_page_completion()
 
+
     def _handle_page_completion(self):
         """Обрабатывает завершение страницы"""
         self.current_make_processed_pages += 1
         
-        if (self.current_make_processed_pages >= self.current_make_total_pages 
+        # Обновляем статистику Scrapy
+        self._update_scrapy_stats()
+        
+        # Обновляем прогресс страниц для текущей марки
+        if self.current_make_task is not None:
+            if self.current_make_total_pages > 0:
+                progress_percentage = (self.current_make_processed_pages / self.current_make_total_pages) * 100
+                
+                # Добавляем информацию о текущей скорости
+                if hasattr(self, 'crawler'):
+                    stats = self.crawler.stats
+                    current_items = len(self.current_make_active_ids)
+                    
+                    description = (f"[yellow]{self.current_make_name}[/yellow] - "
+                                f"стр. {self.current_make_processed_pages}/{self.current_make_total_pages} "
+                                f"({progress_percentage:.1f}%) • "
+                                f"[bold]{current_items}[/bold] объявлений")
+                else:
+                    description = (f"[yellow]{self.current_make_name}[/yellow] - "
+                                f"стр. {self.current_make_processed_pages}/{self.current_make_total_pages} "
+                                f"({progress_percentage:.1f}%)")
+                
+                self.progress.update(
+                    self.current_make_task,
+                    completed=self.current_make_processed_pages,
+                    description=description
+                )
+            else:
+                # Обработка случая с 0 страницами
+                self.progress.update(
+                    self.current_make_task,
+                    completed=1,
+                    total=1,
+                    description=f"[yellow]{self.current_make_name}[/yellow] - нет объявлений (0)"
+                )
+
+        if (self.current_make_processed_pages >= max(self.current_make_total_pages, 1) 
             and not self.make_completion_lock):
             self.make_completion_lock = True
             yield from self._handle_make_completion()
 
+
     def _handle_make_completion(self):
         """Обрабатывает завершение марки"""
         if self.current_make_name:
-            self.logger.info(f"Завершен парсинг марки {self.current_make_name}: {len(self.current_make_active_ids)} ID")
+            # Завершаем задачу текущей марки
+            if self.current_make_task is not None:
+                self.progress.update(
+                    self.current_make_task,
+                    completed=self.current_make_total_pages,
+                    description=f"[green]✅ {self.current_make_name}[/green] - {len(self.current_make_active_ids)} объявлений"
+                )
             
+            self.logger.info(f"Завершен парсинг марки {self.current_make_name}: {len(self.current_make_active_ids)} ID")
+               
             # Отправляем ActiveIdsItem
             active_ids_item = ActiveIdsItem(
                 source_name="otomoto.pl",  # Используем то же имя, что и для обычных объявлений
@@ -394,30 +585,63 @@ class OtomotoSpider(scrapy.Spider):
             if next_request:
                 yield next_request
             else:
-                # Если больше нет марок, логируем финальную статистику
+                # Завершаем общий прогресс
+                if self.main_task is not None:
+                    self.progress.update(self.main_task, completed=len(self.makes_list))
+                
+                self._stop_progress_bar()
                 self._log_final_statistics()
+
+
+    def _stop_progress_bar(self):
+        """Останавливает прогресс-бар"""
+        if self.progress_live:
+            time.sleep(1)  # Даем время увидеть финальное состояние
+            self.progress_live.stop()
+            self.console.print("\n[bold green]🎉 Парсинг завершен![/bold green]")
+
 
     def _log_final_statistics(self):
         """Логирует финальную статистику парсинга"""
-        self.logger.info("=== ФИНАЛЬНАЯ СТАТИСТИКА ПАРСИНГА ===")
-        self.logger.info(f"Обработано марок: {self.current_make_index}")
-        self.logger.info(f"Всего собрано объявлений: {len(self.scraped_ids)}")
-        self.logger.info(f"Ошибки 403 (Forbidden): {self.error_stats['forbidden_403']}")
-        self.logger.info(f"Последовательных 403 в конце: {self.consecutive_403_count}")
-        self.logger.info(f"Статус паузы: {'ДА' if self.is_paused else 'НЕТ'}")
-        self.logger.info(f"Ошибки GraphQL: {self.error_stats['graphql_errors']}")
-        self.logger.info(f"Повторы GraphQL: {self.error_stats['graphql_retries']}")
-        self.logger.info(f"Ошибки декодирования JSON: {self.error_stats['json_decode_errors']}")
-        self.logger.info(f"Ошибки отсутствия данных: {self.error_stats['missing_data_errors']}")
-        self.logger.info("=====================================")
-        
-        if self.consecutive_403_count > 0:
-            self.logger.warning(f"⚠️  ВНИМАНИЕ: Парсинг завершился с {self.consecutive_403_count} последовательными 403 ошибками")
-            self.logger.warning("Возможно, сервер установил блокировку")
-        
-        if self.error_stats['graphql_errors'] > 0:
-            success_rate = ((self.error_stats['graphql_errors'] - self.error_stats['graphql_retries']) / self.error_stats['graphql_errors']) * 100
-            self.logger.info(f"GraphQL успешность повторов: {success_rate:.1f}%")
+        if hasattr(self, 'crawler'):
+            stats = self.crawler.stats
+            
+            # Получаем финальную статистику
+            total_time = time.time() - self.stats_start_time
+            pages_crawled = stats.get_value('response_received_count', 0)
+            items_scraped = stats.get_value('item_scraped_count', 0)
+            
+            pages_per_min = (pages_crawled / total_time) * 60 if total_time > 0 else 0
+            items_per_min = (items_scraped / total_time) * 60 if total_time > 0 else 0
+            
+            # Создаем красивую финальную таблицу
+            table = Table(title="🎯 Финальная статистика парсинга")
+            table.add_column("Параметр", style="cyan", width=25)
+            table.add_column("Значение", style="magenta", width=20)
+            table.add_column("Скорость", style="green", width=15)
+            
+            table.add_row("Обработано марок", str(self.current_make_index), f"{self.current_make_index/(total_time/60):.1f}/мин")
+            table.add_row("Обработано страниц", str(pages_crawled), f"{pages_per_min:.0f}/мин")
+            table.add_row("Собрано объявлений", str(items_scraped), f"{items_per_min:.0f}/мин")
+            table.add_row("Время работы", time.strftime('%H:%M:%S', time.gmtime(total_time)), "")
+            table.add_row("", "", "")  # Разделитель
+            table.add_row("Ошибки 403", str(self.error_stats['forbidden_403']), "")
+            table.add_row("Ошибки GraphQL", str(self.error_stats['graphql_errors']), "")
+            table.add_row("Повторы GraphQL", str(self.error_stats['graphql_retries']), "")
+            table.add_row("Ошибки JSON", str(self.error_stats['json_decode_errors']), "")
+            
+            self.console.print()  # Пустая строка
+            self.console.print(table)
+            self.console.print()
+            
+            # Также логируем в обычный лог (для файлов логов)
+            self.logger.info("=== ФИНАЛЬНАЯ СТАТИСТИКА ПАРСИНГА ===")
+            self.logger.info(f"Обработано марок: {self.current_make_index}")
+            self.logger.info(f"Обработано страниц: {pages_crawled} ({pages_per_min:.0f}/мин)")
+            self.logger.info(f"Собрано объявлений: {items_scraped} ({items_per_min:.0f}/мин)")
+            self.logger.info(f"Время работы: {time.strftime('%H:%M:%S', time.gmtime(total_time))}")
+            self.logger.info(f"Ошибки: 403={self.error_stats['forbidden_403']}, GraphQL={self.error_stats['graphql_errors']}")
+
 
     def _send_active_ids_item(self, response):
         """Отправляет ActiveIdsItem через pipeline"""
@@ -425,16 +649,33 @@ class OtomotoSpider(scrapy.Spider):
         if active_ids_item:
             yield active_ids_item
 
+
     def _handle_403_error(self, response, context="unknown"):
         """Обрабатывает 403 ошибку с логикой паузы"""
         self.error_stats['forbidden_403'] += 1
         self.consecutive_403_count += 1
+
+        # Обновляем статистику и прогресс с предупреждением
+        self._update_scrapy_stats()
+        
+        if self.current_make_task is not None:
+            self.progress.update(
+                self.current_make_task,
+                description=f"[red]⚠️ {self.current_make_name}[/red] - 403 ошибка ({self.consecutive_403_count}/{self.max_consecutive_403})"
+            )
         
         self.logger.error(f"Получен статус 403 (Forbidden) в контексте: {context}")
         self.logger.error(f"URL: {response.url}")
         self.logger.error(f"Последовательных 403 ошибок: {self.consecutive_403_count}/{self.max_consecutive_403}")
         
         if self.consecutive_403_count >= self.max_consecutive_403:
+            # Обновляем прогресс с информацией о паузе
+            if self.current_make_task is not None:
+                self.progress.update(
+                    self.current_make_task,
+                    description=f"[red]⏸️ {self.current_make_name}[/red] - пауза {self.pause_duration//60} мин"
+                )
+            
             self.logger.warning(f"🚨 ДОСТИГНУТО МАКСИМАЛЬНОЕ КОЛИЧЕСТВО 403 ОШИБОК ({self.max_consecutive_403})")
             self.logger.warning(f"⏸️  СТАВИМ ПАРСЕР НА ПАУЗУ НА {self.pause_duration//60} МИНУТ")
             self.is_paused = True
@@ -454,7 +695,14 @@ class OtomotoSpider(scrapy.Spider):
     
     def _resume_after_pause(self, response):
         """Возобновляет работу после паузы"""
-        self.logger.info(f"⏯️  ВОЗОБНОВЛЯЕМ РАБОТУ ПОСЛЕ ПАУЗЫ")
+        # Обновляем прогресс о возобновлении
+        if self.current_make_task is not None:
+            self.progress.update(
+                self.current_make_task,
+                description=f"[green]▶️ {self.current_make_name}[/green] - возобновление работы"
+            )
+        
+        self.logger.info(f"⏯️ ВОЗОБНОВЛЯЕМ РАБОТУ ПОСЛЕ ПАУЗЫ")
         self.logger.info(f"Сбрасываем счетчик последовательных 403 ошибок")
         
         self.is_paused = False
@@ -471,6 +719,8 @@ class OtomotoSpider(scrapy.Spider):
     def _handle_graphql_error(self, response, errors, context="unknown"):
         """Обрабатывает GraphQL ошибки с повторными попытками"""
         self.error_stats['graphql_errors'] += 1
+
+        self._update_scrapy_stats()
         
         # Получаем количество попыток из мета-данных
         retry_count = response.meta.get('graphql_retry_count', 0)
@@ -507,4 +757,8 @@ class OtomotoSpider(scrapy.Spider):
         if self.consecutive_403_count > 0:
             self.logger.info(f"✅ Успешный запрос. Сбрасываем счетчик 403 ошибок (было: {self.consecutive_403_count})")
             self.consecutive_403_count = 0
+
+    
+    def spider_closed(self, spider):
+        self._stop_progress_bar()
 
