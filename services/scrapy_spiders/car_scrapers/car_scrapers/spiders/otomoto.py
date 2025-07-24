@@ -15,6 +15,8 @@ from collections import OrderedDict
 from datetime import datetime, timezone
 from ..items import ParsedAdItem, ActiveIdsItem
 from ..utils.make_loader import MakeLoader
+from typing import Optional, AsyncGenerator
+from scrapy import Request
 
 
 class OtomotoSpider(scrapy.Spider):
@@ -73,28 +75,28 @@ class OtomotoSpider(scrapy.Spider):
         self.current_make_name = None
         self.current_make_active_ids = set()
 
-
         # Добавляем статистику для Rich
         self.stats_start_time = time.time()
         self.last_stats_update = time.time()
         self.stats_update_interval = 5
         
-        # Rich Progress Bar с дополнительной статистикой
-        self.console = Console()
+        # Rich Progress Bar
+        self.console = Console(width=120)
         self.progress = Progress(
             TextColumn("[bold blue]{task.description}"),
-            BarColumn(bar_width=30),
+            BarColumn(bar_width=25),  # Уменьшаем ширину бара
             TextColumn("[progress.percentage]{task.percentage:>3.1f}%"),
             TextColumn("•"),
             TextColumn("{task.completed}/{task.total}"),
             TextColumn("•"),
             TimeRemainingColumn(),
             console=self.console,
-            refresh_per_second=4
+            refresh_per_second=2,
+            expand=True
         )
-
         self.main_task: Optional[TaskID] = None
-        self.stats_task: Optional[TaskID] = None
+        self.stats_task_1: Optional[TaskID] = None
+        self.stats_task_2: Optional[TaskID] = None
         self.current_make_task: Optional[TaskID] = None
         self.progress_live: Optional[Live] = None
 
@@ -127,16 +129,16 @@ class OtomotoSpider(scrapy.Spider):
         self.logger.info(f"Загружено {len(self.makes_list)} марок для парсинга")
 
 
-    def start_requests(self):
-        """Стандартный метод Scrapy для начала парсинга"""
+    async def start(self) -> AsyncGenerator[Request, None]:
+        """Асинхронный стартовый метод для запуска парсера"""
         if not self.makes_list:
-            self.logger.error("Список марок пуст, парсинг невозможен")
+            self.logger.error("Нет марок для парсинга. Проверьте загрузку списка марок.")
             return
-
-        # Запускаем Rich Progress Bar
-        self._start_progress_bar()
         
-        # Запускаем первую марку
+        # Запускаем прогресс-бар
+        self._start_progress_bar()
+
+        # Запускаем парсинг первой марки
         request = self._get_request_for_current_make()
         if request:
             yield request
@@ -144,19 +146,36 @@ class OtomotoSpider(scrapy.Spider):
 
     def _start_progress_bar(self):
         """Запускает Rich Progress Bar для отслеживания прогресса"""
-        self.progress_live = Live(self.progress, console=self.console, refresh_per_second=4)
+        self.console = Console(
+            width=120,
+            legacy_windows=False
+            )
+        self.progress_live = Live(
+            self.progress,
+            console=self.console,
+            refresh_per_second=2,
+            auto_refresh=True,
+            transient=False
+            )        
         self.progress_live.start()
 
         # Основная задача - прогресс по маркам
         self.main_task = self.progress.add_task(
-            "[green]Общий прогресс парсинга",
+            "[green]📈 Общий прогресс парсинга",
             total=len(self.makes_list),
         )
         
-        # Задача для статистики Scrapy
-        self.stats_task = self.progress.add_task(
-            "[cyan]📊 Статистика",
-            total=100,  # Процентный прогресс не нужен для статистики
+        # Первая строка статистики
+        self.stats_task_1 = self.progress.add_task(
+            "[cyan]📊 Инициализация статистики...",
+            total=100,
+            visible=True
+        )
+        
+        # Вторая строка статистики
+        self.stats_task_2 = self.progress.add_task(
+            "[cyan]⏱️ Инициализация таймера...",
+            total=100,
             visible=True
         )
         
@@ -166,7 +185,7 @@ class OtomotoSpider(scrapy.Spider):
     
     def _update_scrapy_stats(self):
         """Обновляет статистику Scrapy в Rich прогресс-баре"""
-        if self.stats_task is not None and hasattr(self, 'crawler'):
+        if hasattr(self, 'crawler') and hasattr(self, 'stats_task_1') and hasattr(self, 'stats_task_2'):
             stats = self.crawler.stats
             
             # Получаем текущую статистику
@@ -187,19 +206,32 @@ class OtomotoSpider(scrapy.Spider):
             # Форматируем время работы
             elapsed_str = time.strftime('%H:%M:%S', time.gmtime(elapsed_time))
             
-            # Обновляем описание статистики
-            stats_description = (
-                f"[cyan]📊[/cyan] Обработано: [bold]{pages_crawled}[/bold] стр "
-                f"([bold]{pages_per_min:.0f}[/bold]/мин) • "
-                f"Собрано: [bold]{items_scraped}[/bold] объявлений "
-                f"([bold]{items_per_min:.0f}[/bold]/мин) • "
-                f"Время: [bold]{elapsed_str}[/bold]"
+            # Первая строка статистики - объемы данных
+            stats_description_1 = (
+                f"[cyan]📊[/cyan] Страниц: [bold]{pages_crawled}[/bold] • "
+                f"Объявлений: [bold]{items_scraped}[/bold] • "
+                f"Ошибки: [red]{self.error_stats['forbidden_403']}[/red] (403), "
+                f"[red]{self.error_stats['graphql_errors']}[/red] (GraphQL)"
+            )
+            
+            # Вторая строка статистики - скорость и время
+            stats_description_2 = (
+                f"[cyan]⏱️[/cyan] Скорость: [bold]{pages_per_min:.0f}[/bold] стр/мин, "
+                f"[bold]{items_per_min:.0f}[/bold] объявл/мин • "
+                f"Время работы: [bold]{elapsed_str}[/bold]"
+            )
+            
+            # Обновляем обе строки
+            self.progress.update(
+                self.stats_task_1,
+                completed=50,
+                description=stats_description_1
             )
             
             self.progress.update(
-                self.stats_task,
-                completed=50,  # Фиксированное значение для отображения
-                description=stats_description
+                self.stats_task_2,
+                completed=50,
+                description=stats_description_2
             )
         
 
@@ -245,6 +277,7 @@ class OtomotoSpider(scrapy.Spider):
             meta={'handle_httpstatus_list': [403], 'make_name': self.current_make_name}
         )
 
+
     def _update_filters_for_make(self, make_name):
         """Обновляет фильтры для конкретной марки"""
         # Удаляем старый фильтр марки
@@ -252,6 +285,7 @@ class OtomotoSpider(scrapy.Spider):
         
         # Добавляем новый фильтр марки
         self.BASE_FILTERS.append({"name": "filter_enum_make", "value": make_name})
+
 
     def build_url(self, page: int) -> str:
         # ...existing code... (оставляем как есть)
@@ -280,6 +314,7 @@ class OtomotoSpider(scrapy.Spider):
 
         url = f"{self.BASE_URL}?operationName={self.OPERATION_NAME}&variables={encoded_vars}&extensions={encoded_ext}"
         return url
+
 
     def parse_initial(self, response):
         """Обрабатывает первый ответ для марки, определяет общее количество страниц"""
@@ -558,12 +593,12 @@ class OtomotoSpider(scrapy.Spider):
             if self.current_make_task is not None:
                 self.progress.update(
                     self.current_make_task,
-                    completed=self.current_make_total_pages,
+                    completed=max(self.current_make_total_pages, 1),
                     description=f"[green]✅ {self.current_make_name}[/green] - {len(self.current_make_active_ids)} объявлений"
                 )
             
             self.logger.info(f"Завершен парсинг марки {self.current_make_name}: {len(self.current_make_active_ids)} ID")
-               
+        
             # Отправляем ActiveIdsItem
             active_ids_item = ActiveIdsItem(
                 source_name="otomoto.pl",  # Используем то же имя, что и для обычных объявлений
