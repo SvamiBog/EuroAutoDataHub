@@ -40,7 +40,7 @@ run-oto-local:
 	@echo "--- Перехожу в $(SCRAPY_DIR) и запускаю Scrapy Local ---"
 	@cd $(SCRAPY_DIR) && uv run scrapy crawl otomoto
 
-run-oto-docker:
+run-oto:
 	@echo "--- Запуск Scrapy через главный docker-compose ---"
 	docker-compose run --rm scrapy_runner scrapy crawl otomoto
 
