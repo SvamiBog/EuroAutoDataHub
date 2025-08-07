@@ -67,6 +67,10 @@ class OtomotoSpider(scrapy.Spider):
         super().__init__(*args, **kwargs)
 
         self.scraped_ids = set()
+
+        # batch setting
+        self.batch_size = 100
+        self._batch_items = []
         
         # Загружаем список марок
         make_loader = MakeLoader(self.logger)
@@ -534,7 +538,16 @@ class OtomotoSpider(scrapy.Spider):
                 self.current_make_active_ids.add(item['source_ad_id'])
                 self.scraped_ids.add(item['source_ad_id'])
 
-            yield item
+            self._batch_items.append(item)
+            if len(self._batch_items) >= self.batch_size:
+                for batch_item in self._batch_items:
+                    yield batch_item
+                self._batch_items = []
+
+        if self._batch_items:
+            for batch_item in self._batch_items:
+                yield batch_item
+            self._batch_items = []
 
         # Отмечаем завершение обработки страницы
         yield from self._handle_page_completion()
