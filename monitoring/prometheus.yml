@@ -1,0 +1,60 @@
+# Конфигурация Prometheus
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - "rules/*.yml"
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          - alertmanager:9093
+
+scrape_configs:
+  # Scrapy метрики (нужно добавить prometheus_client в spider)
+  - job_name: 'scrapy-spiders'
+    static_configs:
+      - targets: ['scrapy_runner:8000']
+    metrics_path: /metrics
+    scrape_interval: 30s
+
+  # FastAPI метрики
+  - job_name: 'fastapi-api'
+    static_configs:
+      - targets: ['api_service:8000']
+    metrics_path: /metrics
+    scrape_interval: 15s
+
+  # Kafka Consumer метрики
+  - job_name: 'data-processor'
+    static_configs:
+      - targets: ['data_processor:8001']
+    metrics_path: /metrics
+    scrape_interval: 15s
+
+  # Node Exporter (системные метрики)
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+
+  # PostgreSQL метрики
+  - job_name: 'postgres-exporter'
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+
+  # Redis метрики
+  - job_name: 'redis-exporter'
+    static_configs:
+      - targets: ['redis-exporter:9121']
+
+  # Kafka метрики
+  - job_name: 'kafka-exporter'
+    static_configs:
+      - targets: ['kafka-exporter:9308']
+
+  # Prometheus самого себя
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
