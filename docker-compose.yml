@@ -1,6 +1,4 @@
 # EuroAutoDataHub/docker-compose.yml
-version: '3.8'
-
 services:
   zookeeper:
     image: confluentinc/cp-zookeeper:7.3.2 # Используйте актуальную версию
@@ -104,26 +102,18 @@ services:
       dockerfile: ./services/scrapy_spiders/car_scrapers/Dockerfile
     container_name: scrapy_runner_service
     depends_on:
-      db_postgres:
-        condition: service_healthy
       kafka_broker:
         condition: service_started
-    environment:
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - POSTGRES_DB=${POSTGRES_DB}
-      - POSTGRES_SERVER=db_postgres
-      - POSTGRES_PORT=5432
-      - KAFKA_BOOTSTRAP_SERVERS=kafka_broker:9092
-      # Добавляем PYTHONPATH
-      - PYTHONPATH=/usr/src/app:/usr/src/data_processor
-    volumes:
-      - ./services/scrapy_spiders/car_scrapers/car_scrapers:/usr/src/app/car_scrapers
-      - ./services/data_processor:/usr/src/data_processor
-      - ./services/api_service/app/db/models.py:/usr/src/data_processor/app/models.py
-    # Добавляем это:
+    # SCRAPY_* из .env настраивают лимиты, паузы и логи (см. .env.example)
     env_file:
       - .env
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka_broker:9092
+      # В Docker логи пишем в stdout, прогресс-бар выключаем
+      - SCRAPY_LOG_FILE=
+      - SCRAPY_PROGRESS_BAR=false
+    volumes:
+      - ./services/scrapy_spiders/car_scrapers/car_scrapers:/usr/src/app/car_scrapers
 
   api_service:
     build:

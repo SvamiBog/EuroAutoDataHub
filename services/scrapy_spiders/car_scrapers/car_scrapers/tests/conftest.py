@@ -2,8 +2,16 @@ import pytest
 import json
 from unittest.mock import MagicMock, patch
 from scrapy.http import Request, TextResponse
+from scrapy.utils.reactor import install_reactor
+from twisted.internet.error import ReactorAlreadyInstalledError
 
 from ..spiders.otomoto import OtomotoSpider
+
+# get_crawler() в Scrapy 2.13 требует установленный reactor (тот же, что в settings.py)
+try:
+    install_reactor("twisted.internet.asyncioreactor.AsyncioSelectorReactor")
+except ReactorAlreadyInstalledError:
+    pass
 
 
 

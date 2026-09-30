@@ -80,8 +80,10 @@ class CarAdItem(scrapy.Item):
     photo_url = scrapy.Field()
 
 class ActiveIdsItem(scrapy.Item):
-    make_str = scrapy.Field()
-    active_ids = scrapy.Field()
-    timestamp = scrapy.Field()
-    source_name = scrapy.Field()
-    ad_ids = scrapy.Field()
+    """Список ID, найденных при полном обходе марки (для снятия пропавших объявлений)"""
+    source_name = scrapy.Field()  # str: Например, "otomoto.pl"
+    make_str = scrapy.Field()  # str: Марка (значение фильтра площадки)
+    ad_ids = scrapy.Field()  # List[str]: ID объявлений, найденных при обходе
+    expected_count = scrapy.Field()  # int: totalCount, который вернула площадка
+    complete = scrapy.Field()  # bool: марка собрана полностью
+    timestamp = scrapy.Field()  # iso_str: Время завершения обхода марки

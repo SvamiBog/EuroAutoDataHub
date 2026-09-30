@@ -1,6 +1,7 @@
 import asyncio
 import json
 import re
+from pathlib import Path
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import select, text
@@ -17,6 +18,10 @@ DB_PORT = settings.POSTGRES_PORT
 
 DATABASE_URL = f"postgresql+asyncpg://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
+# Справочник марок otomoto, который использует и паук
+MAKES_FILE = (Path(__file__).resolve().parent.parent
+              / "services/scrapy_spiders/car_scrapers/car_scrapers/data/otomoto_makes.json")
+
 engine = create_async_engine(DATABASE_URL, echo=False)
 AsyncSessionFactory = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
@@ -27,7 +32,7 @@ def generate_slug(name: str) -> str:
     return s
 
 async def populate_makes_from_json():
-    json_file_path = "/home/maksim/projects/EuroAutoDataHub/services/scrapy_spiders/car_scrapers/car_scrapers/make_car.json"
+    json_file_path = MAKES_FILE
     added_count = 0
     skipped_count = 0
     skipped_non_dict_count = 0
@@ -122,7 +127,7 @@ async def populate_makes_from_json():
                 print("Successfully committed changes to the database.")
 
 
-    print("\\n--- Population Summary ---")
+    print("\n--- Population Summary ---")
     print(f"Makes added: {added_count}")
     print(f"Makes skipped (already exist): {skipped_count}")
     print(f"Items skipped (unexpected format/name or non-dictionary): {skipped_non_dict_count}")
