@@ -2,6 +2,7 @@
 import asyncio
 import json
 
+import asyncpg
 import pytest
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlmodel import func, select
@@ -143,3 +144,55 @@ def test_run_loop_commits_after_each_batch(run, session_factory, fx, monkeypatch
     run(asyncio.wait_for(ingestor.run(consumer), timeout=10))
     assert consumer.commits == 2
     assert count_listings(run, session_factory) == 2
+
+
+@pytest.mark.parametrize("exc,expected", [
+    (OperationalError("SELECT 1", {}, ConnectionRefusedError()), True),
+    (ConnectionRefusedError(), True),
+    (asyncpg.exceptions.InternalClientError("cannot switch to state"), True),
+    (asyncpg.exceptions.AdminShutdownError("terminating connection"), True),
+    (asyncpg.exceptions.CannotConnectNowError("the database system is starting up"), True),
+    (IntegrityError("INSERT", {}, Exception("duplicate key")), False),
+    (ValueError("bad data"), False),
+])
+def test_is_transient(exc, expected):
+    from app.ingestor import is_transient
+    assert is_transient(exc) is expected
+
+
+def test_maintenance_survives_db_outage(run, session_factory, fx, monkeypatch):
+    import app.ingestor as ingestor_module
+
+    resets = []
+
+    async def on_db_error():
+        resets.append(1)
+
+    async def broken(*args, **kwargs):
+        raise asyncpg.exceptions.InternalClientError("cannot switch to state 15")
+
+    ingestor = Ingestor(CONFIG, session_factory, Dlq(), fx=fx, on_db_error=on_db_error)
+    monkeypatch.setattr(ingestor_module, "apply_pending_shards", broken)
+    run(ingestor.run_maintenance())  # не падает
+    assert resets == [1]
+
+
+def test_transient_error_resets_pool_before_retry(run, session_factory, fx, monkeypatch):
+    resets = []
+
+    async def on_db_error():
+        resets.append(1)
+
+    ingestor = Ingestor(CONFIG, session_factory, Dlq(), fx=fx, on_db_error=on_db_error)
+    real_write = ingestor.write
+    calls = []
+
+    async def flaky_write(items):
+        calls.append(1)
+        if len(calls) == 1:
+            raise ConnectionRefusedError("db down")
+        await real_write(items)
+
+    monkeypatch.setattr(ingestor, "write", flaky_write)
+    run(ingestor.handle_records([obs_record("1")]))
+    assert resets == [1] and count_listings(run, session_factory) == 1

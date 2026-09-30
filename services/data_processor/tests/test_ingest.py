@@ -152,6 +152,14 @@ def test_crawl_events_are_recorded_idempotently(run, session_factory):
     assert shards["make=bmw"].lifecycle_status == "incomplete"
 
 
+def test_run_finished_updates_planned_shards_after_split(run, session_factory):
+    finished = run_finished()
+    finished.stats = {"shards_planned": 7}
+    apply_events(run, session_factory, [run_started(shards=2), finished])
+    [crawl_run] = fetch(run, session_factory, CrawlRun)
+    assert crawl_run.shards_planned == 7
+
+
 def test_shard_without_run_started_creates_run(run, session_factory):
     apply_events(run, session_factory, [shard_finished(run_id="lost-start")])
     [crawl_run] = fetch(run, session_factory, CrawlRun)

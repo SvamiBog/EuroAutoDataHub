@@ -52,7 +52,8 @@ async def build_report(session: AsyncSession, run: CrawlRun) -> dict[str, Any]:
         warnings.append(f"обработано шардов {len(shards)} из {run.shards_planned}")
     incomplete = [s.shard_key for s in shards if not s.complete]
     if incomplete:
-        warnings.append(f"неполных шардов: {len(incomplete)}")
+        names = ", ".join(incomplete[:5]) + (" …" if len(incomplete) > 5 else "")
+        warnings.append(f"неполных шардов: {len(incomplete)} ({names})")
     if expected and collected / expected < MIN_COMPLETENESS:
         warnings.append(f"полнота {collected / expected:.1%} ниже {MIN_COMPLETENESS:.0%}")
     for status in (ShardLifecycleStatus.SUSPICIOUS.value, ShardLifecycleStatus.TIMEOUT.value):

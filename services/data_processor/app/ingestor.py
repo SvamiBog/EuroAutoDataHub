@@ -17,8 +17,9 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Optional
 
+import asyncpg
 from pydantic import ValidationError
-from sqlalchemy.exc import DBAPIError, InterfaceError, OperationalError, SQLAlchemyError
+from sqlalchemy.exc import DBAPIError, InterfaceError, OperationalError
 
 from eadh_common.messages import ListingObservation, crawl_event_adapter
 
@@ -32,7 +33,14 @@ from app.report import send_pending_reports
 logger = logging.getLogger("ingestor")
 
 # Ошибки, при которых БД считается недоступной: батч повторяется, в DLQ ничего не уходит
-TRANSIENT_ERRORS = (OperationalError, InterfaceError, ConnectionError, OSError, asyncio.TimeoutError)
+TRANSIENT_ERRORS = (
+    OperationalError, InterfaceError, ConnectionError, OSError, asyncio.TimeoutError,
+    # asyncpg при обрыве соединения бросает свои исключения, не всегда обёрнутые SQLAlchemy
+    asyncpg.exceptions.PostgresConnectionError,  # класс 08: connection_exception
+    asyncpg.exceptions.OperatorInterventionError,  # класс 57: admin_shutdown, cannot_connect_now
+    asyncpg.exceptions.InterfaceError,
+    asyncpg.exceptions.InternalClientError,
+)
 
 
 class StopRequested(Exception):
@@ -58,16 +66,23 @@ class ParsedRecord:
 def is_transient(exc: BaseException) -> bool:
     if isinstance(exc, DBAPIError) and exc.connection_invalidated:
         return True
-    return isinstance(exc, TRANSIENT_ERRORS)
+    # SQLAlchemy оборачивает ошибку драйвера: проверяем и её
+    for error in (exc, getattr(exc, "orig", None), exc.__cause__):
+        if error is not None and isinstance(error, TRANSIENT_ERRORS):
+            return True
+    return False
 
 
 class Ingestor:
     def __init__(self, config: Settings, session_factory, dlq_send: Callable[[str, bytes], Awaitable[None]],
                  normalizer: Optional[Normalizer] = None, fx: Optional[FxConverter] = None,
-                 stop_event: Optional[asyncio.Event] = None):
+                 stop_event: Optional[asyncio.Event] = None,
+                 on_db_error: Optional[Callable[[], Awaitable[None]]] = None):
         self.config = config
         self.session_factory = session_factory
         self.dlq_send = dlq_send
+        # Вызывается после ошибки соединения с БД: сбрасывает пул, чтобы не переиспользовать сломанные соединения
+        self.on_db_error = on_db_error
         self.normalizer = normalizer or Normalizer()
         self.fx = fx or FxConverter()
         self.stop_event = stop_event or asyncio.Event()
@@ -132,6 +147,7 @@ class Ingestor:
                 attempt += 1
                 delay = min(2 ** attempt, self.config.DB_RETRY_MAX_DELAY_S)
                 logger.warning(f"БД недоступна ({type(exc).__name__}: {exc}). Повтор через {delay:.0f} с")
+                await self.reset_db_connections()
                 await self.sleep_or_stop(delay)
 
     async def write_one_by_one(self, items: list[ParsedRecord]) -> None:
@@ -145,10 +161,19 @@ class Ingestor:
                 except Exception as exc:
                     if is_transient(exc):
                         attempt += 1
+                        await self.reset_db_connections()
                         await self.sleep_or_stop(min(2 ** attempt, self.config.DB_RETRY_MAX_DELAY_S))
                         continue
                     await self.to_dlq(item.record, f"{type(exc).__name__}: {exc}")
                     break
+
+    async def reset_db_connections(self) -> None:
+        if self.on_db_error is None:
+            return
+        try:
+            await self.on_db_error()
+        except Exception as exc:
+            logger.warning(f"Не удалось сбросить пул соединений: {exc}")
 
     async def sleep_or_stop(self, delay: float) -> None:
         try:
@@ -181,8 +206,12 @@ class Ingestor:
             async with self.session_factory() as session:
                 await send_pending_reports(session, self.config)
                 await session.commit()
-        except SQLAlchemyError as exc:
-            logger.error(f"Ошибка периодических задач: {exc}")
+        except Exception as exc:
+            if is_transient(exc):
+                logger.warning(f"Периодические задачи отложены: БД недоступна ({type(exc).__name__}: {exc})")
+                await self.reset_db_connections()
+            else:
+                logger.exception(f"Ошибка периодических задач: {exc}")
 
     async def refresh_fx(self) -> None:
         try:
@@ -251,7 +280,7 @@ async def main() -> None:
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, stop_event.set)
 
-    ingestor = Ingestor(settings, session_factory, dlq_send, stop_event=stop_event)
+    ingestor = Ingestor(settings, session_factory, dlq_send, stop_event=stop_event, on_db_error=engine.dispose)
     logger.info(f"Ingestor: Kafka {bootstrap}, топики {settings.KAFKA_TOPIC_OBSERVATIONS}, "
                 f"{settings.KAFKA_TOPIC_CRAWL_EVENTS}, группа {settings.KAFKA_CONSUMER_GROUP}")
     await producer.start()

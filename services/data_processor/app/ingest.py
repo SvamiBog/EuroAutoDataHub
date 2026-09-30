@@ -191,6 +191,9 @@ async def apply_crawl_event(session: AsyncSession, event) -> None:
         run.status = "finished"
         run.finish_reason = event.finish_reason
         run.stats = event.stats
+        # после дробления шардов их больше, чем было запланировано при старте
+        if isinstance(event.stats.get("shards_planned"), int):
+            run.shards_planned = event.stats["shards_planned"]
 
     else:
         raise TypeError(f"Неизвестное событие обхода: {type(event)}")
