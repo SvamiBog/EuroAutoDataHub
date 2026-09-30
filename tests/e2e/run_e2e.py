@@ -20,6 +20,10 @@
   8: обход через три прокси, один из которых забанен (403): запрос повторяется через другой прокси,
      забаненный уходит на паузу, остальные запросы распределяются по двум рабочим; обход полный,
      в отчёте — предупреждение о бане прокси.
+Этап 4 (AutoScout24, источник e2e.as24, лимит 2 страницы на шард):
+  9: DE bmw 75 объявлений и IT fiat 25: шард дробится по годам, 2018 год (45 объявлений) — по ценовым полосам;
+     все шарды полные, страна объявления — из выдачи;
+ 10: пропали по одному объявлению в годовом и в ценовом шарде — у обоих первый пропуск, у остальных нет.
 """
 import asyncio
 import json
@@ -40,6 +44,8 @@ from eadh_common.settings import DatabaseSettings
 
 HERE = Path(__file__).resolve().parent
 SOURCE = "e2e.test"
+SOURCE_AS24 = "e2e.as24"
+SOURCES = (SOURCE, SOURCE_AS24)
 WAIT_S = 90
 
 
@@ -75,15 +81,30 @@ DAYS += [
 ]
 
 
+def as24_catalog(skip=()):
+    """DE bmw: 2016, 2017, 2019 — по 10 объявлений, 2018 — 45 (не помещается в 2 страницы); IT fiat: 25."""
+    bmw = [{"id": f"de-{year}-{i}", "year": year, "price": 8000 + year % 10 * 1000 + i * 250}
+           for year, count in ((2016, 10), (2017, 10), (2018, 45), (2019, 10)) for i in range(count)]
+    fiat = [{"id": f"it-{i}", "year": 2015 + i % 5, "price": 5000 + i * 100, "model": "Panda"} for i in range(25)]
+    return {"DE": {"bmw": [a for a in bmw if a["id"] not in skip]}, "IT": {"fiat": fiat}}
+
+
+AS24_SETTINGS = {"MAX_PAGES_PER_SHARD": 2}
+DAYS += [
+    {"site": "autoscout24", "catalog": as24_catalog(), "settings": AS24_SETTINGS},
+    {"site": "autoscout24", "catalog": as24_catalog(skip=("de-2016-3", "de-2018-20")), "settings": AS24_SETTINGS},
+]
+
+
 async def cleanup(factory) -> None:
     async with factory() as session:
-        runs = select(CrawlRun.id).where(CrawlRun.source == SOURCE)
+        runs = select(CrawlRun.id).where(CrawlRun.source.in_(SOURCES))
         await session.execute(delete(CrawlShard).where(CrawlShard.run_id.in_(runs)))
-        await session.execute(delete(CrawlRun).where(CrawlRun.source == SOURCE))
-        listings = select(Listing.id).where(Listing.source == SOURCE)
-        await session.execute(delete(Anomaly).where(or_(Anomaly.source == SOURCE, Anomaly.listing_id.in_(listings))))
+        await session.execute(delete(CrawlRun).where(CrawlRun.source.in_(SOURCES)))
+        listings = select(Listing.id).where(Listing.source.in_(SOURCES))
+        await session.execute(delete(Anomaly).where(or_(Anomaly.source.in_(SOURCES), Anomaly.listing_id.in_(listings))))
         await session.execute(delete(ListingEvent).where(ListingEvent.listing_id.in_(listings)))
-        await session.execute(delete(Listing).where(Listing.source == SOURCE))
+        await session.execute(delete(Listing).where(Listing.source.in_(SOURCES)))
         await session.commit()
 
 
@@ -122,12 +143,19 @@ async def wait_for_report(factory, run_id: str) -> dict:
     raise AssertionError(f"Отчёт о запуске {run_id} не появился за {WAIT_S} с — ingestor запущен?")
 
 
-async def listing_states(factory) -> dict:
+async def listing_states(factory, source: str = SOURCE) -> dict:
     async with factory() as session:
         rows = (await session.execute(
             select(Listing.source_listing_id, Listing.status, Listing.missed_complete_runs)
-            .where(Listing.source == SOURCE))).all()
+            .where(Listing.source == source))).all()
     return {row[0]: (row[1], row[2]) for row in rows}
+
+
+async def countries(factory, source: str) -> dict:
+    async with factory() as session:
+        return dict((await session.execute(
+            select(Listing.country_code, func.count()).where(Listing.source == source)
+            .group_by(Listing.country_code))).tuples().all())
 
 
 async def events(factory, listing_id: str) -> list:
@@ -204,6 +232,17 @@ async def main() -> None:
             rules = {a["rule"]: a["severity"] for a in report["anomalies"]}
             check(report["finish_reason"] == "shard_failures" and rules.get("run_aborted") == "critical",
                   "досрочная остановка — критический алерт run_aborted")
+        if day == 9:
+            print("Этап 4 (AutoScout24):")
+            check(all(result["shards"].values()), f"все шарды AutoScout24 полные ({len(result['shards'])} шт.)")
+            check(any("year_from=2018;year_to=2018;price_from=" in key for key in result["shards"]),
+                  "2018 год разделён по ценовым полосам")
+            check(any(key.startswith("country=IT;make=fiat") for key in result["shards"]), "шард Италии")
+            check(await countries(factory, SOURCE_AS24) == {"DE": 75, "IT": 25}, "100 объявлений: 75 в DE, 25 в IT")
+        if day == 10:
+            missed = {k: v for k, v in (await listing_states(factory, SOURCE_AS24)).items() if v != ("active", 0)}
+            check(missed == {"de-2016-3": ("active", 1), "de-2018-20": ("active", 1)},
+                  f"первый пропуск в годовом и ценовом шарде, остальные не тронуты ({missed})")
         if day in (6, 7):
             active = sum(1 for status, _ in states.values() if status == "active")
             check(active == active_before_broken, f"сломанный обход не снимает объявления: активных {active}")
@@ -223,7 +262,8 @@ async def main() -> None:
             check(active == active_before_broken, f"статусы объявлений не изменились: активных {active}")
 
     async with factory() as session:
-        runs = (await session.execute(select(func.count()).select_from(CrawlRun).where(CrawlRun.source == SOURCE))).scalar()
+        runs = (await session.execute(
+            select(func.count()).select_from(CrawlRun).where(CrawlRun.source.in_(SOURCES)))).scalar()
         observed = (await session.execute(
             select(func.count()).select_from(DailyObservation)
             .join(Listing, Listing.id == DailyObservation.listing_id).where(Listing.source == SOURCE))).scalar()
