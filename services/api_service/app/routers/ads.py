@@ -6,6 +6,7 @@ import math
 
 from app.db.database import get_session
 from app.crud.ads import (
+    SORTABLE_FIELDS,
     get_ads_with_filters,
     get_ad_by_id,
     get_ad_history,
@@ -29,8 +30,12 @@ router = APIRouter()
 async def get_ads(
     page: int = Query(1, ge=1, description="Номер страницы"),
     page_size: int = Query(20, ge=1, le=100, description="Размер страницы"),
-    sort_by: str = Query("createdAt", description="Поле для сортировки"),
-    sort_order: str = Query("desc", regex="^(asc|desc)$", description="Порядок сортировки"),
+    sort_by: str = Query(
+        "createdAt",
+        pattern=f"^({'|'.join(SORTABLE_FIELDS)})$",
+        description="Поле для сортировки",
+    ),
+    sort_order: str = Query("desc", pattern="^(asc|desc)$", description="Порядок сортировки"),
     
     # Фильтры
     make_name: Optional[str] = Query(None, description="Марка автомобиля"),

@@ -7,6 +7,9 @@ from sqlmodel import Session
 from app.db.models import AutoAd, AutoAdHistory, CarMake, CarModel
 from app.schemas.ads import AdFilters
 
+# Поля, по которым разрешена сортировка списка объявлений
+SORTABLE_FIELDS = ("createdAt", "price", "year", "mileage", "engine_power", "sold_at")
+
 
 async def get_ads_with_filters(
     session: AsyncSession,
@@ -77,7 +80,9 @@ async def get_ads_with_filters(
         count_query = count_query.where(and_(*conditions))
     
     # Сортировка
-    sort_column = getattr(AutoAd, sort_by, AutoAd.createdAt)
+    if sort_by not in SORTABLE_FIELDS:
+        sort_by = "createdAt"
+    sort_column = getattr(AutoAd, sort_by)
     if sort_order.lower() == "asc":
         query = query.order_by(asc(sort_column))
     else:

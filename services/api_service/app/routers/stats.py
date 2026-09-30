@@ -77,7 +77,7 @@ async def get_models_statistics(
 
 @router.get("/trends")
 async def get_market_trends_data(
-    period: str = Query("daily", regex="^(daily|weekly|monthly)$", description="Период группировки"),
+    period: str = Query("daily", pattern="^(daily|weekly|monthly)$", description="Период группировки"),
     days: int = Query(30, ge=7, le=365, description="Количество дней для анализа"),
     session: AsyncSession = Depends(get_session)
 ):

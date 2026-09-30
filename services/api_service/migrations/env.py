@@ -9,13 +9,12 @@ from alembic import context
 
 
 current_path = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.join(current_path, '..', '..') # Путь к services/api_service/
-app_path = os.path.join(project_root, 'app')          # Путь к services/api_service/app/
-sys.path.insert(0, project_root) # Добавляем корень сервиса
-# sys.path.insert(0, app_path) # Может понадобиться, если импорты в models.py относительные
+project_root = os.path.abspath(os.path.join(current_path, '..'))  # Путь к services/api_service/
+sys.path.insert(0, project_root)  # Добавляем корень сервиса
 
 from sqlmodel import SQLModel # Импортируем SQLModel
 
+from app.core.config import settings
 from app.db import models as app_models
 
 
@@ -27,6 +26,17 @@ config = context.config
 # This line sets up loggers basically.
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
+
+
+def get_database_url() -> str:
+    """URL для миграций берётся из окружения (POSTGRES_* или SYNC_DATABASE_URL), а не из alembic.ini."""
+    if settings.SYNC_DATABASE_URL:
+        return settings.SYNC_DATABASE_URL
+    return settings.database_url.replace("postgresql+asyncpg://", "postgresql+psycopg2://", 1)
+
+
+# ConfigParser трактует '%' как интерполяцию, поэтому экранируем
+config.set_main_option("sqlalchemy.url", get_database_url().replace("%", "%%"))
 
 # add your model's MetaData object here
 # for 'autogenerate' support
