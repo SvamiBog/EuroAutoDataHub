@@ -68,14 +68,14 @@
 
 | Волна | Площадка | Страны | Комментарий |
 |-------|----------|--------|-------------|
-| MVP | otomoto.pl | PL | Уже есть паук (GraphQL) |
-| 2 | autovit.ro, standvirtual.com | RO, PT | Предположительно та же платформа, что у otomoto: переиспользование паука (проверить) |
-| 2 | AutoScout24 | DE, IT, NL, BE, AT, FR, ES, LU | Одна площадка — много стран |
-| 3 | mobile.de | DE | Крупнейший рынок; сильная антибот‑защита — отдельная оценка |
+| MVP | otomoto.pl | PL | Паук `otomoto` (GraphQL) |
+| 2 | autovit.ro, standvirtual.com | RO, PT | Та же платформа OLX, что у otomoto: пауки `autovit`, `standvirtual` (проверить на живом сайте) |
+| 2 | AutoScout24 | DE, IT, NL, BE, AT, FR, ES, LU | Одна площадка — много стран: паук `autoscout24` (проверить на живом сайте) |
+| 3 | mobile.de | DE | Крупнейший рынок; сильная антибот‑защита — парсингом не подключается, только через партнёрский API |
 | 3 | subito.it, leboncoin/lacentrale, coches.net, marktplaats, willhaben, sauto.cz | IT, FR, ES, NL, AT, CZ | По результатам юр.‑ и тех.‑оценки |
 
 Для каждой площадки до подключения проводится **оценка**: условия использования и robots.txt,
-антибот‑защита, наличие JSON/GraphQL API, объём, лимиты пагинации.
+антибот‑защита, наличие JSON/GraphQL API, объём, лимиты пагинации. Чек‑лист и оценки — в [SOURCES.md](SOURCES.md).
 
 ### 4.2 Объекты
 
