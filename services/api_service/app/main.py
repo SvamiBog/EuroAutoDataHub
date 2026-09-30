@@ -2,14 +2,14 @@
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
 from app.core.config import settings
-from app.core.security import get_cors_origins
+from app.core.security import get_cors_origins, require_api_key
 from app.core.middleware import LoggingMiddleware, ErrorHandlingMiddleware
-from app.routers import ads, stats, health
+from app.routers import ads, analytics, stats, health
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -21,6 +21,8 @@ async def lifespan(app: FastAPI):
     """События при запуске и остановке приложения"""
     logger.info("Starting EuroAutoDataHub API...")
     logger.info(f"Database URL: {settings.database_url.split('@')[1] if '@' in settings.database_url else 'masked'}")
+    if not settings.api_keys:
+        logger.warning("API_KEYS не заданы: /api/v1 доступен без ключа")
     yield
     logger.info("Shutting down EuroAutoDataHub API...")
 
@@ -49,9 +51,12 @@ app.add_middleware(
 )
 
 # Подключение роутеров
+# /health и / открыты, данные /api/v1 — по ключу X-API-Key (если заданы API_KEYS)
+protected = [Depends(require_api_key)]
 app.include_router(health.router, prefix="/health", tags=["Health"])
-app.include_router(ads.router, prefix="/api/v1/ads", tags=["Ads"])
-app.include_router(stats.router, prefix="/api/v1/stats", tags=["Statistics"])
+app.include_router(ads.router, prefix="/api/v1/ads", tags=["Ads"], dependencies=protected)
+app.include_router(stats.router, prefix="/api/v1/stats", tags=["Statistics"], dependencies=protected)
+app.include_router(analytics.router, prefix="/api/v1/analytics", tags=["Analytics"], dependencies=protected)
 
 @app.get("/")
 async def root():
@@ -64,6 +69,7 @@ async def root():
         "endpoints": {
             "ads": "/api/v1/ads",
             "statistics": "/api/v1/stats",
+            "analytics": "/api/v1/analytics",
             "health": "/health"
         }
     }
