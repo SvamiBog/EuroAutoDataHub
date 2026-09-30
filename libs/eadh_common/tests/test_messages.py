@@ -64,6 +64,9 @@ def test_shard_requires_make_and_known_filters():
 
 def test_shard_key_is_canonical():
     assert shard_key_for({"year_to": 2015, "make": "audi", "year_from": None}) == "make=audi;year_to=2015"
+    # страна и цена (AutoScout24): ключи шардов otomoto при этом не меняются
+    assert shard_key_for({"price_to": 9999, "make": "bmw", "country": "DE", "price_from": 5000, "year_from": 2018,
+                          "year_to": 2018}) == "country=DE;make=bmw;year_from=2018;year_to=2018;price_from=5000;price_to=9999"
 
 
 @pytest.mark.parametrize("raw,expected", [

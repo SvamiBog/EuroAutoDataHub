@@ -131,11 +131,11 @@ class TestOtomotoSpiderState:
 
     def test_initial_make_state(self, simple_spider):
         """Тест: Проверяем начальное состояние для марок."""
-        assert simple_spider.current_make_name is None
-        assert simple_spider.current_make_active_ids == set()
-        assert simple_spider.current_make_total_pages == 0
-        assert simple_spider.current_make_processed_pages == 0
-        assert simple_spider.make_completion_lock is False
+        assert simple_spider.current_shard is None
+        assert simple_spider.shard_ids == set()
+        assert simple_spider.shard_pages == 0
+        assert simple_spider.shard_pages_done == 0
+        assert simple_spider.shard_closing is False
 
     def test_error_stats_initialization(self, simple_spider):
         """Тест: Проверяем инициализацию статистики ошибок."""
@@ -261,10 +261,10 @@ class TestOtomotoDataProcessing:
         assert isinstance(simple_spider.scraped_ids, set)
         assert len(simple_spider.scraped_ids) == 0  # Изначально пустое
 
-    def test_current_make_active_ids_is_set(self, simple_spider):
-        """Тест: Проверяем, что current_make_active_ids это множество."""
-        assert isinstance(simple_spider.current_make_active_ids, set)
-        assert len(simple_spider.current_make_active_ids) == 0  # Изначально пустое
+    def test_shard_ids_is_set(self, simple_spider):
+        """Тест: Проверяем, что shard_ids это множество."""
+        assert isinstance(simple_spider.shard_ids, set)
+        assert len(simple_spider.shard_ids) == 0  # Изначально пустое
 
 
 # === ПАРАМЕТРИЗОВАННЫЕ ТЕСТЫ ДЛЯ РАЗЛИЧНЫХ КОНФИГУРАЦИЙ ===
@@ -300,7 +300,7 @@ def test_spider_settings_defaults(simple_spider):
     assert simple_spider.max_403_retries == 3
     assert simple_spider.max_pauses == 5
     assert simple_spider.graphql_max_retries == 3
-    assert simple_spider.min_make_completeness == 0.95
+    assert simple_spider.min_shard_completeness == 0.95
 
 
 def test_spider_domain_configuration(simple_spider):

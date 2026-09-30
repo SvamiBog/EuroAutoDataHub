@@ -131,3 +131,34 @@ class TestMakeLoader:
     ])
     def test_parse_makes_arg(self, value, expected):
         assert parse_makes_arg(value) == expected
+
+
+def test_output_file_mode_writes_jsonl(tmp_path, spider):
+    path = tmp_path / "probe.jsonl"
+    pipeline = KafkaPipeline(["unused:9092"], "listing_observations", "crawl_events", output_file=str(path))
+    pipeline.open_spider(spider)
+    item = ListingObservationItem(source="otomoto.pl", source_listing_id="1", run_id=spider.run_id)
+    pipeline.process_item(item, spider)
+    pipeline.spider_closed(spider, "finished")
+    lines = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    assert [(m["topic"], m["value"].get("event")) for m in lines] == [
+        ("crawl_events", "run_started"), ("listing_observations", None), ("crawl_events", "run_finished")]
+    assert lines[1]["key"] == "otomoto.pl:1"
+
+
+def test_probe_report(tmp_path):
+    from ..probe import main
+    path = tmp_path / "probe.jsonl"
+    good = {"price": 100, "make": "bmw", "model": "x1", "year": 2020, "mileage_km": 1000, "country_code": "DE",
+            "currency": "EUR"}
+    shard = {"event": "shard_finished", "shard_key": "country=DE;make=bmw", "collected_count": 1, "expected_count": 1,
+             "pages_total": 1, "complete": True}
+    finished = {"event": "run_finished", "finish_reason": "finished", "stats": {}}
+    path.write_text("\n".join(json.dumps({"topic": t, "key": None, "value": v}) for t, v in [
+        ("listing_observations", good), ("crawl_events", shard), ("crawl_events", finished)]), encoding="utf-8")
+    assert main(str(path)) == 0
+    bad = {**good, "year": None}
+    path.write_text("\n".join(json.dumps({"topic": t, "key": None, "value": v}) for t, v in [
+        ("listing_observations", bad), ("crawl_events", {**shard, "complete": False}),
+        ("crawl_events", {**finished, "stats": {"filter_mismatch": 1}})]), encoding="utf-8")
+    assert main(str(path)) == 1

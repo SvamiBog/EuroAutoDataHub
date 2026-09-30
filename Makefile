@@ -49,6 +49,19 @@ run-oto:
 	@echo "--- Запуск Scrapy через главный docker-compose ---"
 	$(DC) run --rm scrapy_runner scrapy crawl otomoto $(MAKES_ARG)
 
+# Любой паук: make run-spider SPIDER=autoscout24 MAKES=bmw ARGS="-a countries=DE"
+SPIDER ?= otomoto
+ARGS ?=
+run-spider:
+	$(DC) run --rm scrapy_runner scrapy crawl $(SPIDER) $(MAKES_ARG) $(ARGS)
+
+# Проверка паука на живом сайте без Kafka: пара страниц, сообщения в probe_<паук>.jsonl
+# make probe SPIDER=autovit MAKES=dacia
+probe:
+	@cd $(SCRAPY_DIR) && rm -f probe_$(SPIDER).jsonl && uv run scrapy crawl $(SPIDER) $(MAKES_ARG) $(ARGS) \
+		-s OUTPUT_FILE=probe_$(SPIDER).jsonl -s MAX_PAGES_PER_SHARD=$${PAGES:-2} -s LOG_FILE= -s PROGRESS_BAR=false
+	@cd $(SCRAPY_DIR) && uv run python -m car_scrapers.probe probe_$(SPIDER).jsonl
+
 # Логи сервисов
 logs-ingestor:
 	$(DC) logs -f ingestor
@@ -101,7 +114,7 @@ define run_tests
 	cd services/api_service && uv run pytest tests $(1)
 endef
 
-.PHONY: test test-warnings test-strict test-coverage test-quiet test-verbose lint e2e
+.PHONY: test test-warnings test-strict test-coverage test-quiet test-verbose lint e2e probe run-spider
 test:
 	@echo "--- 🚀 Запуск всех тестов через pytest ---"
 	$(call run_tests,-v)
@@ -162,6 +175,8 @@ help:
 	@echo "Парсинг:"
 	@echo "  run-oto            - Запуск парсера Otomoto в Docker (MAKES=audi,bmw — только эти марки)"
 	@echo "  run-oto-local      - Запуск парсера Otomoto локально (Kafka на localhost:9094)"
+	@echo "  run-spider         - Любой паук в Docker: SPIDER=autoscout24 MAKES=bmw ARGS=\"-a countries=DE\""
+	@echo "  probe              - Проверка паука на живом сайте без Kafka: SPIDER=autovit MAKES=dacia"
 	@echo ""
 	@echo "Логи:"
 	@echo "  logs-ingestor | logs-scheduler | logs-api | logs-kafka | logs-db"

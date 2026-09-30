@@ -1,8 +1,8 @@
 # services/scrapy_spiders/car_scrapers/car_scrapers/utils/make_loader.py
 """Загрузка списка марок для обхода.
 
-Список берётся из справочника фильтров otomoto (``data/otomoto_makes.json``),
-поэтому паук не зависит от БД и работает на чистой установке.
+Список берётся из справочника площадки в ``data/`` (otomoto: фильтры сайта ``otomoto_makes.json``,
+AutoScout24: ``autoscout24_makes.json``), поэтому паук не зависит от БД и работает на чистой установке.
 """
 import json
 import logging
@@ -47,14 +47,18 @@ class MakeLoader:
         return selected
 
     def _load_from_file(self) -> List[str]:
+        """Справочник: фильтры otomoto ([{"name": "filter_enum_make", "value": ...}]) или {"makes": [...]}."""
         with self.makes_file.open(encoding="utf-8") as f:
             data = json.load(f)
 
-        makes = {
-            item["value"].strip().lower()
-            for item in data
-            if isinstance(item, dict) and item.get("name") == "filter_enum_make" and item.get("value")
-        }
+        if isinstance(data, dict):
+            makes = {str(make).strip().lower() for make in data.get("makes") or [] if str(make).strip()}
+        else:
+            makes = {
+                item["value"].strip().lower()
+                for item in data
+                if isinstance(item, dict) and item.get("name") == "filter_enum_make" and item.get("value")
+            }
         if not makes:
             raise RuntimeError(f"Справочник марок {self.makes_file} пуст или имеет неверный формат")
         return sorted(makes)

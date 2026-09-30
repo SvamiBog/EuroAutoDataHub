@@ -92,6 +92,15 @@ PAUSE_DURATION = int(os.getenv("SCRAPY_PAUSE_DURATION", "300"))
 MAX_403_RETRIES_PER_REQUEST = int(os.getenv("SCRAPY_MAX_403_RETRIES_PER_REQUEST", "3"))
 MAX_PAUSES = int(os.getenv("SCRAPY_MAX_PAUSES", "5"))
 
+# Хэш persisted query GraphQL площадок на платформе otomoto. Меняется при обновлении фронтенда площадки;
+# пусто — хэш из кода паука. Смена хэша без обновления даёт критический алерт api_errors в отчёте о прогоне
+OTOMOTO_QUERY_HASH = os.getenv("SCRAPY_OTOMOTO_QUERY_HASH", "")
+AUTOVIT_QUERY_HASH = os.getenv("SCRAPY_AUTOVIT_QUERY_HASH", "")
+STANDVIRTUAL_QUERY_HASH = os.getenv("SCRAPY_STANDVIRTUAL_QUERY_HASH", "")
+
+# AutoScout24: страны обхода (ISO через запятую): DE, AT, BE, ES, FR, IT, LU, NL; пусто — все
+AUTOSCOUT24_COUNTRIES = os.getenv("SCRAPY_AUTOSCOUT24_COUNTRIES", "")
+
 # Повторы запроса при ошибках GraphQL ("Internal Error")
 GRAPHQL_MAX_RETRIES = int(os.getenv("SCRAPY_GRAPHQL_MAX_RETRIES", "3"))
 
@@ -154,6 +163,9 @@ KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka_broker:909
 # Топики по контракту libs/eadh_common/messages.py
 KAFKA_TOPIC_OBSERVATIONS = os.getenv("KAFKA_TOPIC_OBSERVATIONS", "listing_observations")
 KAFKA_TOPIC_CRAWL_EVENTS = os.getenv("KAFKA_TOPIC_CRAWL_EVENTS", "crawl_events")
+
+# Проверка паука без Kafka: путь к JSONL-файлу, куда пишутся сообщения вместо Kafka (пусто — Kafka)
+OUTPUT_FILE = os.getenv("SCRAPY_OUTPUT_FILE", "")
 
 # Дополнительные параметры KafkaProducer
 KAFKA_PRODUCER_CONFIG = {

@@ -64,7 +64,7 @@ def crawler_spider():
 
 def response_for(spider, body, page=1, status=200, **meta):
     request = Request(spider.build_url(page=page),
-                      meta={"page_num": page, "make_name": spider.current_make_name,
+                      meta={"page_num": page, "make_name": spider.current_shard.make,
                             "shard_key": spider.current_shard.key, "handle_httpstatus_list": [403], **meta})
     text = body if isinstance(body, str) else json.dumps(body)
     return TextResponse(url=request.url, body=text, status=status, request=request, encoding="utf-8")
@@ -107,7 +107,7 @@ class TestShardCompleteness:
         assert event["filters"] == {"make": "audi"}
         assert (event["expected_count"], event["collected_count"], event["complete"]) == (60, 60, True)
         assert event["run_id"] == spider.run_id
-        assert spider.make_results["make=audi"]["complete"] is True
+        assert spider.shard_results["make=audi"]["complete"] is True
         # переход к следующему шарду
         assert requests[0].meta["shard_key"] == "make=bmw"
 
@@ -117,7 +117,7 @@ class TestShardCompleteness:
 
         _, [event], requests = split(list(spider.parse_page(response_for(spider, "not json", page=2))))
         assert event["complete"] is False and event["pages_failed"] == 1
-        assert spider.make_results["make=audi"] == {"expected": 60, "collected": 50, "failed_pages": 1, "complete": False}
+        assert spider.shard_results["make=audi"] == {"expected": 60, "collected": 50, "failed_pages": 1, "complete": False}
         assert requests[0].meta["shard_key"] == "make=bmw"
 
     def test_too_few_collected_is_incomplete(self, crawler_spider):
@@ -197,7 +197,7 @@ class Test403Handling:
         assert requests[0].url == response.url
         assert requests[0].dont_filter is True
         assert requests[0].meta["retry_403_count"] == 1
-        assert spider.current_make_processed_pages == 0  # страница еще не засчитана
+        assert spider.shard_pages_done == 0  # страница еще не засчитана
 
     def test_403_gives_up_after_max_retries(self, crawler_spider):
         spider = crawler_spider
@@ -317,7 +317,7 @@ class TestRequestErrors:
         with pytest.raises(CloseSpider) as exc:
             list(spider.parse_initial(response_for(spider, body)))
         assert exc.value.reason == "shard_failures"
-        assert spider.make_results["make=opel"]["complete"] is False
+        assert spider.shard_results["make=opel"]["complete"] is False
 
     def test_successful_shard_resets_failure_counter(self):
         spider = create_spider(makes="audi,bmw,opel,fiat", MAX_CONSECUTIVE_FAILED_SHARDS=2)
@@ -330,7 +330,7 @@ class TestRequestErrors:
 class TestItemParsing:
 
     def test_build_item_fields(self, crawler_spider):
-        item = crawler_spider._build_item(make_node("123"))
+        item = crawler_spider.build_item(make_node("123"))
         assert item["source_listing_id"] == "123"
         assert item["run_id"] == crawler_spider.run_id
         assert (item["source"], item["country_code"]) == ("otomoto.pl", "PL")
@@ -343,7 +343,7 @@ class TestItemParsing:
 
     def test_build_item_tolerates_nulls(self, crawler_spider):
         node = make_node("1", price=None, location=None, mainPhoto=None, parameters=[{"key": "year", "value": "abc"}])
-        item = crawler_spider._build_item(node)
+        item = crawler_spider.build_item(node)
         assert item["price"] is None
         assert item["city"] is None
         assert item["image_url"] is None
@@ -370,7 +370,7 @@ class TestContract:
 
     def test_observation_with_nulls_matches_contract(self, crawler_spider):
         node = make_node("1", price=None, location=None, mainPhoto=None, parameters=[])
-        ListingObservation.model_validate(as_message(crawler_spider._build_item(node)))
+        ListingObservation.model_validate(as_message(crawler_spider.build_item(node)))
 
     def test_shard_event_matches_contract(self, crawler_spider):
         _, [event], _ = split(list(crawler_spider.parse_initial(response_for(crawler_spider, search_body(["1"], 1)))))
