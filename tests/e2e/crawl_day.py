@@ -23,7 +23,7 @@ SOURCE = "e2e.test"
 
 with open(sys.argv[1]) as f:
     scenario = json.load(f)
-server = serve(scenario["catalog"], scenario.get("blocked", []))
+server = serve(scenario["catalog"], scenario.get("blocked", []), scenario.get("broken"))
 
 
 class E2ESpider(OtomotoSpider):

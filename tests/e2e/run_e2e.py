@@ -1,15 +1,21 @@
-"""Сквозная проверка этапа 1: паук -> Kafka -> ingestor -> PostgreSQL.
+"""Сквозная проверка этапов 1–3: паук -> Kafka -> ingestor -> PostgreSQL.
 
 Нужен запущенный стек (make dc-up): Kafka на localhost:9094, PostgreSQL на localhost:5433, ingestor.
 Запуск: make e2e
 
-Сценарий из четырёх «дней» (источник e2e.test, прошлые данные e2e удаляются):
+Сценарий из семи «дней» (источник e2e.test, прошлые данные e2e удаляются):
   1: audi 120 объявлений (3 стр.), bmw 30;
   2: у audi пропали a118 и a119, у a0 новая цена; bmw заблокирована (403) — шард неполный;
   3: audi снова без a118, a119 — второй полный обход, снятие; bmw без b29 — первый пропуск
      (неполный день 2 не считается);
   4: a119 вернулся; audi дробится по годам (MAX_PAGES_PER_SHARD=1); b29 снимается.
 Этап 2: дневные наблюдения записаны, витрина сегментов посчитана после прогона.
+Этап 3:
+  5: a300 — снятый a118 с тем же VIN и меньшим пробегом (перевыставление, уменьшение пробега);
+     a400 с ценой 1 PLN — флаг качества данных;
+  6: неверный хэш persisted query — площадка отвечает ошибкой GraphQL: алерт в отчёте того же прогона,
+     статусы объявлений не меняются;
+  7: площадка отвечает HTTP 400 — паук останавливается после первого шарда (shard_failures).
 """
 import asyncio
 import json
@@ -20,10 +26,12 @@ import tempfile
 import time
 from pathlib import Path
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from eadh_common.models import CrawlRun, CrawlShard, DailyObservation, Listing, ListingEvent, SegmentDailyStats
+from eadh_common.models import (
+    Anomaly, CrawlRun, CrawlShard, DailyObservation, Listing, ListingEvent, SegmentDailyStats,
+)
 from eadh_common.settings import DatabaseSettings
 
 HERE = Path(__file__).resolve().parent
@@ -31,9 +39,13 @@ SOURCE = "e2e.test"
 WAIT_S = 90
 
 
-def audi(skip=(), price0=40000):
-    return [{"id": f"a{i}", "price": price0 if i == 0 else 40000 + i, "year": 2000 + i % 20}
-            for i in range(120) if i not in skip]
+def vin(i: int) -> str:
+    return f"WAUZZZ8KXAA{i:06d}"
+
+
+def audi(skip=(), price0=40000, extra=()):
+    return [{"id": f"a{i}", "price": price0 if i == 0 else 40000 + i, "year": 2000 + i % 20, "vin": vin(i)}
+            for i in range(120) if i not in skip] + list(extra)
 
 
 def bmw(skip=()):
@@ -47,6 +59,15 @@ DAYS = [
     {"catalog": {"audi": audi(skip=(118,), price0=38000), "bmw": bmw(skip=(29,))},
      "settings": {"MAX_PAGES_PER_SHARD": 1}},
 ]
+# Этап 3: перевыставление a118 под новым ID и цена-заглушка
+DAY5_CATALOG = {"audi": audi(skip=(118,), price0=38000, extra=[
+    {"id": "a300", "price": 39000, "year": 2018, "vin": vin(118), "mileage": 60000},
+    {"id": "a400", "price": 1, "year": 2015}]), "bmw": bmw(skip=(29,))}
+DAYS += [
+    {"catalog": DAY5_CATALOG},
+    {"catalog": DAY5_CATALOG, "broken": "graphql"},
+    {"catalog": DAY5_CATALOG, "broken": "http400", "settings": {"MAX_CONSECUTIVE_FAILED_SHARDS": 1}},
+]
 
 
 async def cleanup(factory) -> None:
@@ -55,9 +76,33 @@ async def cleanup(factory) -> None:
         await session.execute(delete(CrawlShard).where(CrawlShard.run_id.in_(runs)))
         await session.execute(delete(CrawlRun).where(CrawlRun.source == SOURCE))
         listings = select(Listing.id).where(Listing.source == SOURCE)
+        await session.execute(delete(Anomaly).where(or_(Anomaly.source == SOURCE, Anomaly.listing_id.in_(listings))))
         await session.execute(delete(ListingEvent).where(ListingEvent.listing_id.in_(listings)))
         await session.execute(delete(Listing).where(Listing.source == SOURCE))
         await session.commit()
+
+
+async def wait_for_anomalies(factory, rules: set, listing_id: str = None) -> dict:
+    """Детекторы ingestor нашли аномалии всех правил rules (для объявления listing_id или запуска)."""
+    deadline = time.monotonic() + WAIT_S
+    found = {}
+    while time.monotonic() < deadline:
+        async with factory() as session:
+            query = select(Anomaly).outerjoin(Listing, Listing.id == Anomaly.listing_id).where(
+                or_(Anomaly.source == SOURCE, Listing.source == SOURCE))
+            if listing_id:
+                query = query.where(Listing.source_listing_id == listing_id)
+            found = {a.rule: a for a in (await session.execute(query)).scalars().all()}
+        if rules <= set(found):
+            return found
+        await asyncio.sleep(1)
+    raise AssertionError(f"Аномалии {rules - set(found)} не найдены за {WAIT_S} с")
+
+
+async def quality_flags(factory, listing_id: str):
+    async with factory() as session:
+        return (await session.execute(select(Listing.quality_flags).where(
+            Listing.source == SOURCE, Listing.source_listing_id == listing_id))).scalar_one()
 
 
 async def wait_for_report(factory, run_id: str) -> dict:
@@ -134,6 +179,29 @@ async def main() -> None:
             check(states["b29"][0] == "delisted", "b29 снят после двух полных обходов")
             active = sum(1 for status, _ in states.values() if status == "active")
             check(active == 148, f"ложных снятий нет: активных {active} из 148 ожидаемых")
+        if day == 5:
+            print("Этап 3:")
+            found = await wait_for_anomalies(factory, {"relisted_new_id", "mileage_rollback"}, "a300")
+            check(found["relisted_new_id"].details["match"] == "VIN", "a300 — перевыставленный a118 (совпал VIN)")
+            check("100 000 км, теперь 60 000 км" in found["mileage_rollback"].message, "уменьшение пробега a300")
+            check(await quality_flags(factory, "a400") == ["price_too_low"], "a400 (1 PLN) помечен флагом качества")
+            check(report["flagged_listings"] == 1, "отчёт считает объявления с нарушениями качества")
+            active_before_broken = sum(1 for status, _ in states.values() if status == "active")
+        if day == 6:
+            rules = {a["rule"]: a["severity"] for a in report["anomalies"]}
+            check(rules.get("api_errors") == "critical" and rules.get("zero_collected") == "critical",
+                  f"сломанный хэш запроса: критический алерт в отчёте того же прогона ({sorted(rules)})")
+            found = await wait_for_anomalies(factory, {"api_errors", "zero_collected"})
+            check(found["api_errors"].run_id == result["run_id"] and found["api_errors"].notified_at is not None,
+                  "аномалия запуска записана и отправлена вместе с отчётом")
+        if day == 7:
+            check(list(result["shards"]) == ["make=audi"], "HTTP 400: паук остановился после первого шарда")
+            rules = {a["rule"]: a["severity"] for a in report["anomalies"]}
+            check(report["finish_reason"] == "shard_failures" and rules.get("run_aborted") == "critical",
+                  "досрочная остановка — критический алерт run_aborted")
+        if day in (6, 7):
+            active = sum(1 for status, _ in states.values() if status == "active")
+            check(active == active_before_broken, f"сломанный обход не снимает объявления: активных {active}")
 
     async with factory() as session:
         runs = (await session.execute(select(func.count()).select_from(CrawlRun).where(CrawlRun.source == SOURCE))).scalar()
@@ -145,7 +213,7 @@ async def main() -> None:
             .where(SegmentDailyStats.stat_date == func.current_date(), SegmentDailyStats.level == "country",
                    SegmentDailyStats.country_code == "PL"))).scalar()
     print("Этап 2:")
-    check(observed == 150, f"дневные наблюдения: {observed} (по одному на объявление за день)")
+    check(observed == 152, f"дневные наблюдения: {observed} (по одному на объявление за день)")
     check(stats_today == 1, "витрина сегментов посчитана за сегодня")
     await engine.dispose()
     print(f"E2E пройден: {runs} запуска обхода")
