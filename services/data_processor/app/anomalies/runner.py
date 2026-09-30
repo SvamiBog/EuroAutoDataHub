@@ -1,14 +1,14 @@
 """Запуск детекторов аномалий: после отчётов о прогонах (ingestor) и из командной строки.
 
 Порядок для дня D после прогона:
-1. флаги качества активных объявлений (только для последнего дня — это снимок текущего состояния);
+1. флаги качества и дубли активных объявлений (только для последнего дня — это снимок текущего состояния);
 2. витрина сегментов за D (PostgreSQL) — её считает вызывающий, между шагами 1 и 3;
 3. поведенческие и рыночные аномалии за D;
 4. справедливые цены, ценовые аномалии и дайджесты «ниже рынка» (только для последнего дня);
 5. сводка новых аномалий в Telegram.
 """
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Optional
 
 from sqlalchemy import update
@@ -23,6 +23,7 @@ from app.anomalies.market import market_findings
 from app.anomalies.prices import detect_price_anomalies
 from app.anomalies.quality import QualityRules, refresh_quality_flags
 from app.anomalies.store import format_anomaly, save_findings
+from app.dedup import refresh_duplicates
 from app.notify import Notifier
 
 logger = logging.getLogger(__name__)
@@ -61,11 +62,15 @@ async def check_sources(session_factory, config, notifier: Notifier, now: dateti
 
 
 async def refresh_quality(session_factory, config, day: date) -> int:
+    """Флаги качества и дубли активных объявлений — до витрины и справедливых цен."""
     async with session_factory() as session:
         changed = await refresh_quality_flags(session, QualityRules.from_settings(config), day)
         await session.commit()
     if changed:
         logger.info(f"Качество данных: флаги изменены у {changed} объявлений")
+    async with session_factory() as session:
+        await refresh_duplicates(session, datetime.now(timezone.utc))
+        await session.commit()
     return changed
 
 

@@ -86,3 +86,32 @@ def test_subscriptions_crud(client):
     assert client.delete(f"/api/v1/subscriptions/{subscription['id']}").status_code == 204
     assert client.delete(f"/api/v1/subscriptions/{subscription['id']}").status_code == 404
     assert client.patch("/api/v1/subscriptions/9999", json={"active": True}).status_code == 404
+
+
+def test_listing_card_shows_duplicates(client):
+    import asyncio
+    from datetime import datetime, timezone
+    from decimal import Decimal
+
+    from eadh_common.models import Listing, ListingDuplicate
+
+    async def add_duplicate():
+        async with client.factory() as session:
+            original = (await session.execute(Listing.__table__.select().where(Listing.source_listing_id == "1"))).first()
+            copy = Listing(source="autoscout24", source_listing_id="as24-1", country_code="PL", url="https://as24/1",
+                           price_eur=Decimal("10100"), first_seen_at=datetime.now(timezone.utc),
+                           last_seen_at=datetime.now(timezone.utc), status="active")
+            session.add(copy)
+            await session.flush()
+            session.add(ListingDuplicate(listing_id=copy.id, canonical_id=original.id, method="vin", score=1.0,
+                                         detected_at=datetime.now(timezone.utc)))
+            await session.commit()
+            return original.id, copy.id
+    original_id, copy_id = asyncio.run(add_duplicate())
+
+    [duplicate] = client.get(f"/api/v1/ads/{original_id}").json()["duplicates"]
+    assert (duplicate["listing_id"], duplicate["source"], duplicate["canonical"], duplicate["method"]) == (
+        copy_id, "autoscout24", False, "vin")
+    [canonical] = client.get(f"/api/v1/ads/{copy_id}").json()["duplicates"]
+    assert (canonical["listing_id"], canonical["canonical"]) == (original_id, True)
+    assert client.get("/api/v1/ads/" + str(original_id)).json()["price_estimate"] is not None

@@ -14,8 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from eadh_common.models import (
-    AlertSubscription, Listing, ListingEvent, ListingEventType, ListingPriceEstimate, ListingStatus, VehicleMake,
-    VehicleModel,
+    AlertSubscription, Listing, ListingDuplicate, ListingEvent, ListingEventType, ListingPriceEstimate,
+    ListingStatus, VehicleMake, VehicleModel,
 )
 
 from app.notify import Notifier
@@ -60,6 +60,7 @@ async def digest_items(session: AsyncSession, subscription: AlertSubscription, s
         .outerjoin(VehicleMake, VehicleMake.id == Listing.make_id)
         .outerjoin(VehicleModel, VehicleModel.id == Listing.model_id)
         .where(Listing.status == ListingStatus.ACTIVE.value, Listing.quality_flags.is_(None),
+               ~exists().where(ListingDuplicate.listing_id == Listing.id),
                ListingPriceEstimate.deviation <= -subscription.min_discount,
                ListingPriceEstimate.deviation > -config.PRICE_IMPLAUSIBLE_DISCOUNT,
                # оценка по текущей цене: иначе после изменения цены скидка устарела

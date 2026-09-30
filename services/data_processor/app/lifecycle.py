@@ -8,7 +8,10 @@
 - объявление, которого не было в полном обходе шарда, получает missed_complete_runs += 1;
   после DELIST_AFTER_MISSED_RUNS таких обходов подряд оно снимается (событие delisted);
 - если «пропало» больше MAX_DELIST_RATIO активных объявлений шарда, шард помечается
-  suspicious и ничего не меняется (вероятна ошибка парсера).
+  suspicious и ничего не меняется (вероятна ошибка парсера);
+- шард с границами цены (AutoScout24) применяется, только когда запуск завершён штатно и все шарды той же
+  страны и марки в запуске полные: цена объявления меняется, и оно могло перейти в соседний шард,
+  который собран не полностью, — тогда его отсутствие здесь ничего не значит.
 """
 import logging
 from dataclasses import dataclass
@@ -19,8 +22,9 @@ from sqlalchemy import func, or_, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
+from eadh_common.messages import VOLATILE_SHARD_FILTERS
 from eadh_common.models import (
-    CrawlShard, Listing, ListingEvent, ListingEventType, ListingStatus, ShardLifecycleStatus,
+    CrawlRun, CrawlShard, Listing, ListingEvent, ListingEventType, ListingStatus, ShardLifecycleStatus,
 )
 
 logger = logging.getLogger(__name__)
@@ -50,13 +54,41 @@ def shard_scope(shard: CrawlShard) -> list:
     """Условия на listing: какие объявления покрывает шард."""
     filters = shard.filters or {}
     conditions = [Listing.source == shard.source, Listing.make_raw == str(filters["make"]).lower()]
+    if filters.get("country"):
+        conditions.append(Listing.country_code == str(filters["country"]).upper())
     if filters.get("model"):
         conditions.append(Listing.model_raw == str(filters["model"]).lower())
     if filters.get("year_from") is not None:
         conditions.append(Listing.year >= int(filters["year_from"]))
     if filters.get("year_to") is not None:
         conditions.append(Listing.year <= int(filters["year_to"]))
+    if filters.get("price_from") is not None:
+        conditions.append(Listing.price >= int(filters["price_from"]))
+    if filters.get("price_to") is not None:
+        conditions.append(Listing.price <= int(filters["price_to"]))
     return conditions
+
+
+async def volatile_shard_blocked(session: AsyncSession, shard: CrawlShard) -> Optional[str]:
+    """Для шарда с границами цены: None — можно применять, 'wait' — запуск ещё идёт,
+    иначе причина пропуска (запуск прерван или соседний шард неполный)."""
+    filters = shard.filters or {}
+    if not any(filters.get(key) is not None for key in VOLATILE_SHARD_FILTERS):
+        return None
+    run = await session.get(CrawlRun, shard.run_id)
+    if run is None or run.status != "finished":
+        return "wait"
+    if run.finish_reason != "finished":
+        return f"запуск завершён досрочно ({run.finish_reason})"
+    siblings = (await session.execute(
+        select(CrawlShard).where(CrawlShard.run_id == shard.run_id, CrawlShard.source == shard.source,
+                                 CrawlShard.complete.is_(False))
+    )).scalars().all()
+    for sibling in siblings:
+        other = sibling.filters or {}
+        if other.get("make") == filters.get("make") and other.get("country") == filters.get("country"):
+            return f"неполный соседний шард {sibling.shard_key}"
+    return None
 
 
 async def _acquire_lock(session: AsyncSession) -> bool:
@@ -74,6 +106,17 @@ async def apply_shard(session: AsyncSession, shard: CrawlShard, config: Lifecycl
                       now: datetime) -> Optional[ShardOutcome]:
     """Применяет полный шард. None — наблюдения шарда ещё не записаны, нужно подождать."""
     scope = shard_scope(shard)
+
+    blocked = await volatile_shard_blocked(session, shard)
+    if blocked == "wait":
+        if now - shard.finished_at <= config.wait_timeout:
+            return None
+        blocked = "запуск не завершился"
+    if blocked:
+        shard.lifecycle_status = ShardLifecycleStatus.INCOMPLETE.value
+        shard.lifecycle_applied_at = now
+        logger.warning(f"Шард {shard.shard_key} ({shard.run_id}) с границами цены пропущен: {blocked}")
+        return ShardOutcome(shard.shard_key, shard.run_id, shard.lifecycle_status)
 
     ingested = await _count(session, *scope, Listing.last_seen_run_id == shard.run_id)
     if ingested < shard.collected_count:

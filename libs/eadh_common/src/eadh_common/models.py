@@ -408,3 +408,23 @@ class AlertSubscription(SQLModel, table=True):
     active: bool = True
     created_at: datetime = Field(sa_column=_ts(nullable=False))
     last_sent_at: Optional[datetime] = Field(default=None, sa_column=_ts())
+
+
+class ListingDuplicate(SQLModel, table=True):
+    """Дубль объявления: тот же автомобиль на другой площадке (или дважды на одной).
+
+    Пересчитывается целиком после каждого прогона по активным объявлениям. canonical_id — объявление,
+    которое остаётся в аналитике (появилось раньше других); дубли в предложение, цены и справедливую
+    цену не входят.
+    """
+
+    __tablename__ = "listing_duplicate"
+
+    listing_id: int = Field(sa_column=sa.Column(
+        sa.BigInteger, sa.ForeignKey("listing.id", ondelete="CASCADE"), primary_key=True))
+    canonical_id: int = Field(sa_column=sa.Column(
+        sa.BigInteger, sa.ForeignKey("listing.id", ondelete="CASCADE"), nullable=False, index=True))
+    # vin — совпал VIN; attributes — модель, год, страна, топливо, пробег ±1 %, цена ±5 % на разных площадках
+    method: str = Field(max_length=16)
+    score: float
+    detected_at: datetime = Field(sa_column=_ts(nullable=False))

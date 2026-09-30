@@ -73,6 +73,18 @@ class PriceEstimateResponse(BaseModel):
     computed_at: datetime
 
 
+class DuplicateResponse(BaseModel):
+    """Тот же автомобиль в другом объявлении (другая площадка или повтор на той же)"""
+    listing_id: int
+    source: str
+    source_listing_id: str
+    url: Optional[str] = None
+    price_eur: Optional[Decimal] = None
+    status: str
+    canonical: bool = Field(description="Это объявление учитывается в аналитике")
+    method: Optional[str] = Field(None, description="vin или attributes")
+
+
 class BelowMarketItem(BaseModel):
     listing_id: int
     source: str

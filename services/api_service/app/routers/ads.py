@@ -30,7 +30,7 @@ from app.schemas.ads import (
     ListingListResponse,
     ListingResponse,
 )
-from app.schemas.anomalies import AnomalyResponse, PriceEstimateResponse
+from app.schemas.anomalies import AnomalyResponse, DuplicateResponse, PriceEstimateResponse
 
 router = APIRouter()
 
@@ -102,6 +102,8 @@ async def _detail(session: AsyncSession, listing: Optional[Listing]) -> ListingD
     if estimate is not None:
         detail.price_estimate = PriceEstimateResponse.model_validate(estimate)
     detail.anomalies = [AnomalyResponse.model_validate(a) for a in await anomalies_crud.listing_anomalies(session, listing.id)]
+    detail.duplicates = [DuplicateResponse.model_validate(d)
+                         for d in await anomalies_crud.listing_duplicates(session, listing.id)]
     return detail
 
 

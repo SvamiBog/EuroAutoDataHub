@@ -24,9 +24,11 @@ LATEST_STATS = "(SELECT max(stat_date) FROM segment_daily_stats)"
 YEAR_COLUMN = {"column_settings": {'["name","Год"]': {"number_separators": "."}}}
 
 # Фильтры по характеристикам объявления l (listing) с каноничными марками vm и моделями vmo.
-# Объявления с нарушениями качества данных (неправдоподобные цены, годы, пробег) не учитываются
+# Объявления с нарушениями качества данных (неправдоподобные цены, годы, пробег) и дубли (тот же автомобиль
+# на другой площадке) не учитываются
 LISTING_FILTERS = """
       AND l.quality_flags IS NULL
+      AND NOT EXISTS (SELECT 1 FROM listing_duplicate d WHERE d.listing_id = l.id)
       [[AND vm.slug = {{make}}]]
       [[AND vmo.slug = {{model}}]]
       [[AND l.country_code = {{country}}]]
@@ -212,6 +214,7 @@ SELECT source AS "Площадка", source_listing_id AS "ID", title AS "Заг
        model_name AS "Модель", year AS "Год", mileage_km AS "Пробег", price AS "Цена", currency AS "Валюта",
        price_eur AS "Цена, EUR", expected_price_eur AS "Справедливая цена, EUR",
        round((price_deviation * 100)::numeric, 1) AS "Отклонение, %", quality_flags AS "Нарушения качества",
+       duplicate_of AS "Дубль объявления",
        status AS "Статус", first_seen_at AS "Впервые", last_seen_at AS "Последний раз",
        delisted_at AS "Снято", days_on_market AS "Дней на рынке", url AS "Ссылка"
 FROM v_listing

@@ -23,12 +23,13 @@ from datetime import date, datetime
 from statistics import median
 from typing import Callable, Optional
 
-from sqlalchemy import delete, insert
+from sqlalchemy import delete, exists, insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from eadh_common.models import (
-    AnomalyKind, AnomalySeverity, Listing, ListingPriceEstimate, ListingStatus, VehicleMake, VehicleModel,
+    AnomalyKind, AnomalySeverity, Listing, ListingDuplicate, ListingPriceEstimate, ListingStatus, VehicleMake,
+    VehicleModel,
 )
 
 from app.anomalies.store import Finding, resolve_missing, save_findings
@@ -258,7 +259,8 @@ async def load_cars(session: AsyncSession) -> list[Car]:
                Listing.gearbox, Listing.mileage_km, Listing.price_eur)
         .where(Listing.status == ListingStatus.ACTIVE.value, Listing.quality_flags.is_(None),
                Listing.price_eur.is_not(None), Listing.price_eur > 0,
-               Listing.model_id.is_not(None), Listing.year.is_not(None))
+               Listing.model_id.is_not(None), Listing.year.is_not(None),
+               ~exists().where(ListingDuplicate.listing_id == Listing.id))
     )).tuples().all()
     return [Car(id=r[0], country=r[1], make_id=r[2], model_id=r[3], year=r[4], fuel=r[5], gearbox=r[6],
                 mileage=r[7], price_eur=float(r[8])) for r in rows]

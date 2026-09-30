@@ -5,6 +5,7 @@
 - active/new/delisted — по жизненному циклу объявлений (first_seen_at, delisted_at);
 - цены и пробег — по наблюдениям этого дня (listing_observation), в EUR; объявления с нарушениями
   качества данных (listing.quality_flags) в ценах и пробеге не учитываются;
+- дубли (listing_duplicate: тот же автомобиль на другой площадке) не учитываются вовсе;
 - срок экспозиции — медиана last_seen_at − first_seen_at у снятых в этот день;
 - снижения цены — события price_change с новой ценой ниже старой.
 Даты — в UTC. Пересчёт дня идемпотентен: строки дня удаляются и считаются заново.
@@ -54,6 +55,8 @@ WITH base AS (
         GROUP BY listing_id
     ) pd ON pd.listing_id = l.id
     WHERE l.first_seen_at < :day_end AND (l.delisted_at IS NULL OR l.delisted_at >= :day_start)
+      -- тот же автомобиль на другой площадке учитывается один раз
+      AND NOT EXISTS (SELECT 1 FROM listing_duplicate d WHERE d.listing_id = l.id)
 ),
 agg AS (
     SELECT country_code, make_id, model_id, year,

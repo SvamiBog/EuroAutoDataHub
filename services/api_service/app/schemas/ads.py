@@ -5,7 +5,7 @@ from typing import List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.schemas.anomalies import AnomalyResponse, PriceEstimateResponse
+from app.schemas.anomalies import AnomalyResponse, DuplicateResponse, PriceEstimateResponse
 
 
 class ListingResponse(BaseModel):
@@ -92,3 +92,5 @@ class ListingDetailResponse(ListingResponse):
     events: List[ListingEventResponse] = []
     price_estimate: Optional[PriceEstimateResponse] = None
     anomalies: List[AnomalyResponse] = []
+    # тот же автомобиль в других объявлениях; в аналитике учитывается только каноничное
+    duplicates: List[DuplicateResponse] = []

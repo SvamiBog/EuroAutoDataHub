@@ -4,12 +4,12 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import Any, Optional, Sequence
 
-from sqlalchemy import case, desc, func, select
+from sqlalchemy import case, desc, exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from eadh_common.models import (
-    AlertSubscription, Anomaly, AnomalyStatus, Listing, ListingPriceEstimate, ListingStatus, VehicleMake,
-    VehicleModel,
+    AlertSubscription, Anomaly, AnomalyStatus, Listing, ListingDuplicate, ListingPriceEstimate, ListingStatus,
+    VehicleMake, VehicleModel,
 )
 from eadh_common.normalize import slugify
 
@@ -118,6 +118,24 @@ async def get_price_estimate(session: AsyncSession, listing_id: int) -> Optional
     return await session.get(ListingPriceEstimate, listing_id)
 
 
+async def listing_duplicates(session: AsyncSession, listing_id: int) -> list[dict[str, Any]]:
+    """Тот же автомобиль на других площадках (или дважды на одной): остальные объявления группы дублей."""
+    own = await session.get(ListingDuplicate, listing_id)
+    canonical = own.canonical_id if own else listing_id
+    members = (await session.execute(
+        select(ListingDuplicate.listing_id, ListingDuplicate.method).where(ListingDuplicate.canonical_id == canonical)
+    )).all()
+    if not members:
+        return []
+    methods = {member_id: method for member_id, method in members}
+    methods.setdefault(canonical, own.method if own else None)
+    ids = [i for i in methods if i != listing_id]
+    listings = (await session.execute(select(Listing).where(Listing.id.in_(ids)).order_by(Listing.id))).scalars()
+    return [{"listing_id": l.id, "source": l.source, "source_listing_id": l.source_listing_id, "url": l.url,
+             "price_eur": l.price_eur, "status": l.status, "canonical": l.id == canonical,
+             "method": methods.get(l.id) or (own.method if own else None)} for l in listings]
+
+
 async def listing_anomalies(session: AsyncSession, listing_id: int) -> list[dict[str, Any]]:
     """Открытые и подтверждённые аномалии объявления (для карточки)."""
     items, _ = await list_anomalies(session, AnomalyFilter(
@@ -136,6 +154,7 @@ async def below_market(session: AsyncSession, *, min_discount: float, max_discou
         .outerjoin(VehicleMake, VehicleMake.id == Listing.make_id)
         .outerjoin(VehicleModel, VehicleModel.id == Listing.model_id)
         .where(Listing.status == ListingStatus.ACTIVE.value, Listing.quality_flags.is_(None),
+               ~exists().where(ListingDuplicate.listing_id == Listing.id),
                ListingPriceEstimate.deviation <= -min_discount, ListingPriceEstimate.deviation > -max_discount)
     )
     if make:
