@@ -7,16 +7,18 @@
 import logging
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Iterable, Optional
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from eadh_common.messages import ListingObservation, RunFinished, RunStarted, ShardFinished
 from eadh_common.models import (
-    CrawlRun, CrawlShard, Listing, ListingEvent, ListingEventType, ListingStatus, ShardLifecycleStatus,
+    CrawlRun, CrawlShard, DailyObservation, Listing, ListingEvent, ListingEventType, ListingStatus,
+    ShardLifecycleStatus,
 )
 
 from app.fx import FxConverter
@@ -65,6 +67,38 @@ async def _load_existing(session: AsyncSession, observations: list[ListingObserv
     return existing
 
 
+def _obs_date(observed_at: datetime) -> date:
+    return observed_at.astimezone(timezone.utc).date()
+
+
+async def upsert_daily_observations(session: AsyncSession, rows: list[dict]) -> None:
+    """Одна строка на объявление за день: более позднее наблюдение того же дня заменяет раннее."""
+    if not rows:
+        return
+    if session.bind.dialect.name == "postgresql":
+        from sqlalchemy.dialects.postgresql import insert
+        # партиция по месяцу должна существовать до вставки
+        for month in sorted({row["obs_date"].replace(day=1) for row in rows}):
+            await session.execute(text("SELECT ensure_listing_observation_partition(:d)"), {"d": month})
+    else:
+        from sqlalchemy.dialects.sqlite import insert
+    table = DailyObservation.__table__
+    stmt = insert(table).values(rows)
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["listing_id", "obs_date"],
+        set_={column: stmt.excluded[column]
+              for column in ("observed_at", "run_id", "price", "currency", "price_eur", "mileage_km")},
+        where=table.c.observed_at <= stmt.excluded.observed_at,
+    )
+    await session.execute(stmt)
+
+
+def _daily_row(listing: Listing, obs: ListingObservation) -> dict:
+    return {"listing_id": listing.id, "obs_date": _obs_date(obs.observed_at), "observed_at": obs.observed_at,
+            "run_id": obs.run_id, "price": listing.price, "currency": listing.currency,
+            "price_eur": listing.price_eur, "mileage_km": listing.mileage_km}
+
+
 def _event(listing: Listing, event_type: ListingEventType, ts: datetime, run_id: Optional[str], **values) -> ListingEvent:
     return ListingEvent(listing_id=listing.id, event_type=event_type.value, ts=ts, run_id=run_id, **values)
 
@@ -85,6 +119,7 @@ async def ingest_observations(session: AsyncSession, observations: Iterable[List
 
     existing = await _load_existing(session, batch)
     new_listings: list[tuple[Listing, ListingObservation]] = []
+    updated_listings: list[tuple[Listing, ListingObservation]] = []
     events: list[ListingEvent] = []
 
     for obs in batch:
@@ -140,6 +175,7 @@ async def ingest_observations(session: AsyncSession, observations: Iterable[List
         listing.last_seen_at = obs.observed_at
         listing.last_seen_run_id = obs.run_id
         listing.missed_complete_runs = 0
+        updated_listings.append((listing, obs))
         stats.updated += 1
 
     # id новых объявлений нужны для событий
@@ -150,6 +186,8 @@ async def ingest_observations(session: AsyncSession, observations: Iterable[List
 
     session.add_all(events)
     await session.flush()
+    await upsert_daily_observations(
+        session, [_daily_row(listing, obs) for listing, obs in new_listings + updated_listings])
     for event in events:
         stats.events[event.event_type] += 1
     return stats

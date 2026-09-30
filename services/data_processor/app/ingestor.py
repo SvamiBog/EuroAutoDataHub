@@ -23,6 +23,7 @@ from sqlalchemy.exc import DBAPIError, InterfaceError, OperationalError
 
 from eadh_common.messages import ListingObservation, crawl_event_adapter
 
+from app.aggregates import compute_segment_stats
 from app.core.config import Settings, settings
 from app.fx import FxConverter, refresh_rates
 from app.ingest import apply_crawl_event, ingest_observations
@@ -61,6 +62,16 @@ class Record:
 class ParsedRecord:
     record: Record
     message: Any
+
+
+def report_dates(reports: list[dict]) -> set:
+    """Даты (UTC), которые затронул запуск: начало и конец обхода."""
+    dates = set()
+    for report in reports:
+        for key in ("started_at", "finished_at"):
+            if report.get(key):
+                dates.add(datetime.fromisoformat(report[key]).astimezone(timezone.utc).date())
+    return dates
 
 
 def is_transient(exc: BaseException) -> bool:
@@ -204,8 +215,16 @@ class Ingestor:
             if outcomes:
                 logger.info(f"Lifecycle: обработано шардов {len(outcomes)}")
             async with self.session_factory() as session:
-                await send_pending_reports(session, self.config)
+                reports = await send_pending_reports(session, self.config)
                 await session.commit()
+            # витрина за дни завершённых запусков: их данные и снятия теперь полные
+            for day in sorted(report_dates(reports)):
+                async with self.session_factory() as session:
+                    if session.bind.dialect.name != "postgresql":
+                        break
+                    rows = await compute_segment_stats(session, day)
+                    await session.commit()
+                logger.info(f"Витрина сегментов за {day}: {rows} строк")
         except Exception as exc:
             if is_transient(exc):
                 logger.warning(f"Периодические задачи отложены: БД недоступна ({type(exc).__name__}: {exc})")

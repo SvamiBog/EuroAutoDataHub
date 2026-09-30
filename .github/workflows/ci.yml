@@ -8,6 +8,24 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # Тесты с маркером pg создают временные БД на этом сервере
+      TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/postgres
+
     steps:
       - uses: actions/checkout@v4
 
@@ -25,6 +43,15 @@ jobs:
 
       - name: Tests
         run: make test
+
+      - name: Migrations on a clean database
+        # Миграции применяются с нуля, а схема совпадает с моделями (alembic check)
+        working-directory: services/api_service
+        env:
+          SYNC_DATABASE_URL: postgresql+psycopg2://postgres:postgres@localhost:5432/postgres
+        run: |
+          uv run alembic upgrade head
+          uv run alembic check
 
       - name: Validate docker-compose.yml
         run: |

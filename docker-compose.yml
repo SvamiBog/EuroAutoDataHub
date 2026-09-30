@@ -187,6 +187,53 @@ services:
       - ./services/scrapy_spiders/car_scrapers/car_scrapers:/usr/src/app/car_scrapers
       - raw_responses:/data/raw
 
+  # --- BI (профиль bi): make bi-up, затем make bi-provision ---
+
+  # Служебная БД Metabase в том же PostgreSQL
+  metabase_db_init:
+    image: postgres:15-alpine
+    container_name: metabase_db_init
+    profiles: [ "bi" ]
+    depends_on:
+      db_postgres:
+        condition: service_healthy
+    environment:
+      - PGHOST=db_postgres
+      - PGUSER=${POSTGRES_USER}
+      - PGPASSWORD=${POSTGRES_PASSWORD}
+      - PGDATABASE=${POSTGRES_DB}
+    entrypoint: [ "/bin/sh", "-c" ]
+    command:
+      - psql -tc "SELECT 1 FROM pg_database WHERE datname = 'metabase'" | grep -q 1 || psql -c "CREATE DATABASE metabase"
+    restart: "no"
+
+  metabase:
+    image: metabase/metabase:v0.50.36
+    container_name: metabase
+    profiles: [ "bi" ]
+    ports:
+      - "3000:3000"
+    depends_on:
+      metabase_db_init:
+        condition: service_completed_successfully
+    environment:
+      MB_DB_TYPE: postgres
+      MB_DB_HOST: db_postgres
+      MB_DB_PORT: 5432
+      MB_DB_DBNAME: metabase
+      MB_DB_USER: ${POSTGRES_USER}
+      MB_DB_PASS: ${POSTGRES_PASSWORD}
+      MB_CHECK_FOR_UPDATES: "false"
+      MB_ANON_TRACKING_ENABLED: "false"
+      JAVA_OPTS: "-Xmx1g"
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -fs http://localhost:3000/api/health || exit 1" ]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   kafka_data:

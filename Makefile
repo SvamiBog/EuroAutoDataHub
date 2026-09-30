@@ -95,6 +95,7 @@ status:
 # Тесты: у сервисов одинаковое имя пакета `app`, поэтому каждый сервис тестируется отдельным процессом
 define run_tests
 	cd libs/eadh_common && uv run pytest tests $(1)
+	cd bi/metabase && uv run pytest test_cards.py $(1)
 	cd $(SCRAPY_DIR) && uv run pytest car_scrapers/tests $(1)
 	cd services/data_processor && uv run pytest tests $(1)
 	cd services/api_service && uv run pytest tests $(1)
@@ -125,13 +126,25 @@ test-verbose:
 	@echo "--- 📝 Подробный запуск тестов ---"
 	$(call run_tests,-vv -s --tb=long)
 
+# BI: Metabase (http://localhost:3000) и дашборды как код (bi/metabase)
+bi-up:
+	$(DC) --profile bi up -d metabase
+
+# Metabase видит PostgreSQL по имени сервиса db_postgres внутри сети docker-compose
+bi-provision:
+	set -a; . ./.env; set +a; MB_DB_HOST=db_postgres MB_DB_PORT=5432 uv run python bi/metabase/provision.py
+
+# Пересчёт витрины за период: make stats-backfill FROM=2026-09-01 TO=2026-09-30
+stats-backfill:
+	$(DC) exec ingestor python -m app.aggregates --from $(FROM) --to $(TO)
+
 # Сквозная проверка паук -> Kafka -> ingestor -> PostgreSQL на запущенном стеке (make dc-up)
 e2e:
 	KAFKA_BOOTSTRAP_SERVERS=$${KAFKA_BOOTSTRAP_SERVERS:-localhost:9094} uv run python tests/e2e/run_e2e.py
 
 # Минимальный линт: синтаксические ошибки и неопределенные имена
 lint:
-	uv run ruff check --select E9,F63,F7,F82 services libs tests
+	uv run ruff check --select E9,F63,F7,F82 services libs tests bi
 
 
 # Помощь
@@ -162,6 +175,11 @@ help:
 	@echo "  db-upgrade         - Применение миграций"
 	@echo "  db-revision        - Создание новой миграции (msg=описание)"
 	@echo "  db-seed-makes      - Заполнить справочник марок"
+	@echo ""
+	@echo "Аналитика:"
+	@echo "  bi-up              - Запуск Metabase (http://localhost:3000)"
+	@echo "  bi-provision       - Создать/обновить дашборды Metabase"
+	@echo "  stats-backfill     - Пересчёт витрины сегментов (FROM=… TO=…)"
 	@echo ""
 	@echo "Тестирование:"
 	@echo "  test               - Запуск всех тестов"

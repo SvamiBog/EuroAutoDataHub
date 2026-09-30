@@ -76,3 +76,35 @@ def client():
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
+
+
+# --- Тесты на настоящем PostgreSQL (маркер pg, нужен TEST_DATABASE_URL) ---
+
+@pytest.fixture(scope="session")
+def pg_url():
+    from eadh_common.testing import get_test_database_url, migrated_database
+    if not get_test_database_url():
+        pytest.skip("TEST_DATABASE_URL не задан")
+    with migrated_database() as url:
+        yield url
+
+
+@pytest.fixture
+def pg_client(pg_url):
+    """TestClient поверх временной БД PostgreSQL с миграциями; данные засевает сам тест через pg_seed."""
+    from sqlalchemy.pool import NullPool
+    from eadh_common.testing import truncate_all
+
+    truncate_all(pg_url)
+    engine = create_async_engine(pg_url, poolclass=NullPool)
+    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+    async def override_get_session():
+        async with factory() as session:
+            yield session
+
+    app.dependency_overrides[get_session] = override_get_session
+    with TestClient(app) as test_client:
+        test_client.factory = factory
+        yield test_client
+    app.dependency_overrides.clear()

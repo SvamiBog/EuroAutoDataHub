@@ -238,3 +238,64 @@ class FxRate(SQLModel, table=True):
     rate_date: date = Field(primary_key=True)
     currency: str = Field(primary_key=True, max_length=3)
     rate_per_eur: Decimal = Field(sa_column=sa.Column(sa.Numeric(18, 6), nullable=False))
+
+
+class DailyObservation(SQLModel, table=True):
+    """Цена и пробег объявления на дату (последнее наблюдение за день).
+
+    В PostgreSQL таблица партиционирована по месяцам (obs_date); партиции создаёт функция
+    ensure_listing_observation_partition(date), её вызывает ingestor перед записью.
+    """
+
+    __tablename__ = "listing_observation"
+
+    listing_id: int = Field(sa_column=sa.Column(
+        sa.BigInteger, sa.ForeignKey("listing.id", ondelete="CASCADE"), primary_key=True))
+    obs_date: date = Field(sa_column=sa.Column(sa.Date, primary_key=True, index=True))
+    observed_at: datetime = Field(sa_column=_ts(nullable=False))
+    run_id: Optional[str] = Field(default=None, max_length=36)
+    price: Optional[Decimal] = Field(default=None, sa_column=sa.Column(Money))
+    currency: Optional[str] = Field(default=None, max_length=3)
+    price_eur: Optional[Decimal] = Field(default=None, sa_column=sa.Column(Money))
+    mileage_km: Optional[int] = None
+
+
+class SegmentLevel(str, Enum):
+    COUNTRY = "country"
+    MAKE = "make"
+    MODEL = "model"
+    MODEL_YEAR = "model_year"
+
+
+class SegmentDailyStats(SQLModel, table=True):
+    """Витрина: рынок сегмента за день (страна → марка → модель → модель + год выпуска).
+
+    Активные, новые и снятые считаются по жизненному циклу объявлений, цены — по наблюдениям
+    за этот день (price_eur), срок экспозиции — по снятым в этот день (last_seen_at - first_seen_at).
+    """
+
+    __tablename__ = "segment_daily_stats"
+    __table_args__ = (
+        sa.Index("ix_segment_stats_lookup", "level", "country_code", "make_id", "model_id", "stat_date"),
+    )
+
+    stat_date: date = Field(primary_key=True)
+    # "model:PL:12:40:-" — уровень, страна, марка, модель, год ("-" — не задано)
+    segment_key: str = Field(primary_key=True, max_length=64)
+    level: str = Field(max_length=16)
+    country_code: str = Field(max_length=2)
+    make_id: Optional[int] = None
+    model_id: Optional[int] = None
+    year: Optional[int] = None
+
+    active_count: int = 0
+    new_count: int = 0
+    delisted_count: int = 0
+    observed_count: int = 0
+    price_eur_p25: Optional[Decimal] = Field(default=None, sa_column=sa.Column(Money))
+    price_eur_median: Optional[Decimal] = Field(default=None, sa_column=sa.Column(Money))
+    price_eur_p75: Optional[Decimal] = Field(default=None, sa_column=sa.Column(Money))
+    mileage_median: Optional[int] = None
+    dom_median_days: Optional[Decimal] = Field(default=None, sa_column=sa.Column(sa.Numeric(8, 1)))
+    price_drop_count: int = 0
+    computed_at: datetime = Field(sa_column=_ts(nullable=False))
