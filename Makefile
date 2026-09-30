@@ -50,11 +50,11 @@ run-oto:
 	$(DC) run --rm scrapy_runner scrapy crawl otomoto $(MAKES_ARG)
 
 # Логи сервисов
-logs-processor:
-	$(DC) logs -f data_processor
+logs-ingestor:
+	$(DC) logs -f ingestor
 
-logs-updater:
-	$(DC) logs -f status_updater
+logs-scheduler:
+	$(DC) logs -f scheduler
 
 logs-api:
 	$(DC) logs -f api_service
@@ -100,7 +100,7 @@ define run_tests
 	cd services/api_service && uv run pytest tests $(1)
 endef
 
-.PHONY: test test-warnings test-strict test-coverage test-quiet test-verbose lint
+.PHONY: test test-warnings test-strict test-coverage test-quiet test-verbose lint e2e
 test:
 	@echo "--- 🚀 Запуск всех тестов через pytest ---"
 	$(call run_tests,-v)
@@ -125,9 +125,13 @@ test-verbose:
 	@echo "--- 📝 Подробный запуск тестов ---"
 	$(call run_tests,-vv -s --tb=long)
 
+# Сквозная проверка паук -> Kafka -> ingestor -> PostgreSQL на запущенном стеке (make dc-up)
+e2e:
+	KAFKA_BOOTSTRAP_SERVERS=$${KAFKA_BOOTSTRAP_SERVERS:-localhost:9094} uv run python tests/e2e/run_e2e.py
+
 # Минимальный линт: синтаксические ошибки и неопределенные имена
 lint:
-	uv run ruff check --select E9,F63,F7,F82 services libs
+	uv run ruff check --select E9,F63,F7,F82 services libs tests
 
 
 # Помощь
@@ -147,7 +151,7 @@ help:
 	@echo "  run-oto-local      - Запуск парсера Otomoto локально (Kafka на localhost:9094)"
 	@echo ""
 	@echo "Логи:"
-	@echo "  logs-processor | logs-updater | logs-api | logs-kafka | logs-db"
+	@echo "  logs-ingestor | logs-scheduler | logs-api | logs-kafka | logs-db"
 	@echo ""
 	@echo "API команды:"
 	@echo "  api-dev            - Запуск API в режиме разработки"
@@ -166,4 +170,5 @@ help:
 	@echo "  test-strict        - Запуск тестов с ошибками на предупреждения"
 	@echo "  test-verbose       - Подробный запуск тестов"
 	@echo "  test-coverage      - Запуск тестов с покрытием кода"
+	@echo "  e2e                - Сквозная проверка на запущенном стеке (make dc-up)"
 	@echo "  lint               - Минимальный линт (синтаксис, неопределенные имена)"
