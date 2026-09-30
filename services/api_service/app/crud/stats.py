@@ -1,267 +1,136 @@
 # services/api_service/app/crud/stats.py
-from typing import List, Dict, Any
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import func, select, and_, text, case
-from datetime import datetime, timedelta
+"""Статистика по объявлениям. Цены — в EUR (price_eur), выборка — активные объявления,
+если не сказано иное: так разные валюты и снятые объявления не искажают метрики."""
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List
 
-from app.db.models import AutoAd, AutoAdHistory
+from sqlalchemy import and_, case, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from eadh_common.models import Listing, ListingStatus
+
+ACTIVE = Listing.status == ListingStatus.ACTIVE.value
+HAS_PRICE = and_(Listing.price_eur.is_not(None), Listing.price_eur > 0)
+
+
+def _round(value) -> float:
+    return round(float(value), 2) if value is not None else 0
 
 
 async def get_general_stats(session: AsyncSession) -> Dict[str, Any]:
     """Получение общей статистики"""
-    
-    # Общее количество объявлений
-    total_ads_query = select(func.count(AutoAd.id_ad))
-    total_ads_result = await session.execute(total_ads_query)
-    total_ads = total_ads_result.scalar()
-    
-    # Активные объявления
-    active_ads_query = select(func.count(AutoAd.id_ad)).where(AutoAd.sold_at.is_(None))
-    active_ads_result = await session.execute(active_ads_query)
-    active_ads = active_ads_result.scalar()
-    
-    # Проданные объявления
-    sold_ads = total_ads - active_ads
-    
-    # Средняя цена
-    avg_price_query = select(func.avg(AutoAd.price)).where(
-        and_(AutoAd.price.isnot(None), AutoAd.price > 0)
-    )
-    avg_price_result = await session.execute(avg_price_query)
-    avg_price = avg_price_result.scalar() or 0
-    
-    # Медианная цена (приблизительно через percentile)
-    median_price_query = select(
-        func.percentile_cont(0.5).within_group(AutoAd.price.asc())
-    ).where(and_(AutoAd.price.isnot(None), AutoAd.price > 0))
-    median_price_result = await session.execute(median_price_query)
-    median_price = median_price_result.scalar() or 0
-    
-    # Средний пробег
-    avg_mileage_query = select(func.avg(AutoAd.mileage)).where(
-        and_(AutoAd.mileage.isnot(None), AutoAd.mileage > 0)
-    )
-    avg_mileage_result = await session.execute(avg_mileage_query)
-    avg_mileage = avg_mileage_result.scalar() or 0
-    
-    # Самая популярная марка
-    popular_make_query = (
-        select(AutoAd.make_name, func.count(AutoAd.id_ad).label('count'))
-        .where(AutoAd.make_name.isnot(None))
-        .group_by(AutoAd.make_name)
-        .order_by(func.count(AutoAd.id_ad).desc())
-        .limit(1)
-    )
-    popular_make_result = await session.execute(popular_make_query)
-    popular_make_row = popular_make_result.first()
-    most_popular_make = popular_make_row[0] if popular_make_row else "N/A"
-    
-    # Самая популярная модель
-    popular_model_query = (
-        select(
-            AutoAd.make_name,
-            AutoAd.model_name,
-            func.count(AutoAd.id_ad).label('count')
-        )
-        .where(and_(AutoAd.make_name.isnot(None), AutoAd.model_name.isnot(None)))
-        .group_by(AutoAd.make_name, AutoAd.model_name)
-        .order_by(func.count(AutoAd.id_ad).desc())
-        .limit(1)
-    )
-    popular_model_result = await session.execute(popular_model_query)
-    popular_model_row = popular_model_result.first()
-    most_popular_model = f"{popular_model_row[0]} {popular_model_row[1]}" if popular_model_row else "N/A"
-    
+    totals = (await session.execute(select(
+        func.count(),
+        func.count().filter(ACTIVE),
+        func.count(func.distinct(Listing.source)),
+    ).select_from(Listing))).one()
+
+    prices = (await session.execute(select(
+        func.avg(Listing.price_eur),
+        func.percentile_cont(0.5).within_group(Listing.price_eur.asc()),
+        func.avg(Listing.mileage_km).filter(Listing.mileage_km > 0),
+    ).where(ACTIVE, HAS_PRICE))).one()
+
+    popular_make = (await session.execute(
+        select(Listing.make_raw).where(ACTIVE, Listing.make_raw.is_not(None))
+        .group_by(Listing.make_raw).order_by(func.count().desc()).limit(1)
+    )).scalar_one_or_none()
+    popular_model = (await session.execute(
+        select(Listing.make_raw, Listing.model_raw)
+        .where(ACTIVE, Listing.make_raw.is_not(None), Listing.model_raw.is_not(None))
+        .group_by(Listing.make_raw, Listing.model_raw).order_by(func.count().desc()).limit(1)
+    )).first()
+
     return {
-        "total_ads": total_ads,
-        "active_ads": active_ads,
-        "sold_ads": sold_ads,
-        "avg_price": round(avg_price, 2),
-        "median_price": round(median_price, 2),
-        "avg_mileage": round(avg_mileage, 2),
-        "most_popular_make": most_popular_make,
-        "most_popular_model": most_popular_model
+        "total_ads": totals[0],
+        "active_ads": totals[1],
+        "delisted_ads": totals[0] - totals[1],
+        "sources": totals[2],
+        "avg_price_eur": _round(prices[0]),
+        "median_price_eur": _round(prices[1]),
+        "avg_mileage_km": _round(prices[2]),
+        "most_popular_make": popular_make or "N/A",
+        "most_popular_model": f"{popular_model[0]} {popular_model[1]}" if popular_model else "N/A",
     }
 
 
 async def get_price_distribution(session: AsyncSession) -> List[Dict[str, Any]]:
-    """Получение распределения цен по диапазонам"""
-    
-    price_ranges_query = select(
-        case(
-            (AutoAd.price < 5000, "0-5K"),
-            (AutoAd.price < 10000, "5K-10K"),
-            (AutoAd.price < 20000, "10K-20K"),
-            (AutoAd.price < 30000, "20K-30K"),
-            (AutoAd.price < 50000, "30K-50K"),
-            (AutoAd.price < 100000, "50K-100K"),
-            else_="100K+"
-        ).label("price_range"),
-        func.count(AutoAd.id_ad).label("count")
-    ).where(
-        and_(AutoAd.price.isnot(None), AutoAd.price > 0)
-    ).group_by("price_range")
-    
-    result = await session.execute(price_ranges_query)
-    return [{"price_range": row[0], "count": row[1]} for row in result.fetchall()]
+    """Распределение активных объявлений по диапазонам цен в EUR"""
+    price_range = case(
+        (Listing.price_eur < 2500, "0-2.5K"),
+        (Listing.price_eur < 5000, "2.5K-5K"),
+        (Listing.price_eur < 10000, "5K-10K"),
+        (Listing.price_eur < 20000, "10K-20K"),
+        (Listing.price_eur < 30000, "20K-30K"),
+        (Listing.price_eur < 50000, "30K-50K"),
+        else_="50K+",
+    ).label("price_range")
+    rows = (await session.execute(
+        select(price_range, func.count()).where(ACTIVE, HAS_PRICE).group_by(price_range)
+    )).all()
+    return [{"price_range": row[0], "count": row[1]} for row in rows]
 
 
 async def get_year_distribution(session: AsyncSession) -> List[Dict[str, Any]]:
-    """Получение распределения по годам выпуска"""
-    
-    year_query = (
-        select(AutoAd.year, func.count(AutoAd.id_ad).label("count"))
-        .where(and_(AutoAd.year.isnot(None), AutoAd.year > 1990))
-        .group_by(AutoAd.year)
-        .order_by(AutoAd.year.desc())
-        .limit(20)
-    )
-    
-    result = await session.execute(year_query)
-    return [{"year": row[0], "count": row[1]} for row in result.fetchall()]
+    """Распределение активных объявлений по годам выпуска"""
+    rows = (await session.execute(
+        select(Listing.year, func.count().label("count"))
+        .where(ACTIVE, Listing.year.is_not(None), Listing.year > 1990)
+        .group_by(Listing.year).order_by(Listing.year.desc()).limit(20)
+    )).all()
+    return [{"year": row[0], "count": row[1]} for row in rows]
 
 
 async def get_region_stats(session: AsyncSession, limit: int = 10) -> List[Dict[str, Any]]:
-    """Получение статистики по регионам"""
-    
-    region_query = (
-        select(
-            AutoAd.region,
-            func.count(AutoAd.id_ad).label("count"),
-            func.avg(AutoAd.price).label("avg_price")
-        )
-        .where(and_(AutoAd.region.isnot(None), AutoAd.price.isnot(None), AutoAd.price > 0))
-        .group_by(AutoAd.region)
-        .order_by(func.count(AutoAd.id_ad).desc())
-        .limit(limit)
-    )
-    
-    result = await session.execute(region_query)
-    return [
-        {
-            "region": row[0],
-            "count": row[1],
-            "avg_price": round(row[2], 2) if row[2] else 0
-        }
-        for row in result.fetchall()
-    ]
+    """Статистика по регионам"""
+    rows = (await session.execute(
+        select(Listing.country_code, Listing.region, func.count().label("count"), func.avg(Listing.price_eur))
+        .where(ACTIVE, HAS_PRICE, Listing.region.is_not(None))
+        .group_by(Listing.country_code, Listing.region)
+        .order_by(func.count().desc()).limit(limit)
+    )).all()
+    return [{"country_code": row[0], "region": row[1], "count": row[2], "avg_price_eur": _round(row[3])}
+            for row in rows]
 
 
 async def get_make_stats(session: AsyncSession, limit: int = 10) -> List[Dict[str, Any]]:
-    """Получение статистики по маркам"""
-    
-    make_query = (
-        select(
-            AutoAd.make_name,
-            func.count(AutoAd.id_ad).label("count"),
-            func.avg(AutoAd.price).label("avg_price"),
-            func.min(AutoAd.price).label("min_price"),
-            func.max(AutoAd.price).label("max_price")
-        )
-        .where(and_(AutoAd.make_name.isnot(None), AutoAd.price.isnot(None), AutoAd.price > 0))
-        .group_by(AutoAd.make_name)
-        .order_by(func.count(AutoAd.id_ad).desc())
-        .limit(limit)
-    )
-    
-    result = await session.execute(make_query)
-    return [
-        {
-            "make_name": row[0],
-            "count": row[1],
-            "avg_price": round(row[2], 2) if row[2] else 0,
-            "min_price": row[3] or 0,
-            "max_price": row[4] or 0
-        }
-        for row in result.fetchall()
-    ]
+    """Статистика по маркам"""
+    rows = (await session.execute(
+        select(Listing.make_raw, func.count().label("count"), func.avg(Listing.price_eur),
+               func.min(Listing.price_eur), func.max(Listing.price_eur))
+        .where(ACTIVE, HAS_PRICE, Listing.make_raw.is_not(None))
+        .group_by(Listing.make_raw).order_by(func.count().desc()).limit(limit)
+    )).all()
+    return [{"make": row[0], "count": row[1], "avg_price_eur": _round(row[2]),
+             "min_price_eur": _round(row[3]), "max_price_eur": _round(row[4])} for row in rows]
 
 
-async def get_model_stats(session: AsyncSession, make_name: str = None, limit: int = 10) -> List[Dict[str, Any]]:
-    """Получение статистики по моделям"""
-    
+async def get_model_stats(session: AsyncSession, make: str = None, limit: int = 10) -> List[Dict[str, Any]]:
+    """Статистика по моделям"""
     query = (
-        select(
-            AutoAd.make_name,
-            AutoAd.model_name,
-            func.count(AutoAd.id_ad).label("count"),
-            func.avg(AutoAd.price).label("avg_price"),
-            func.min(AutoAd.price).label("min_price"),
-            func.max(AutoAd.price).label("max_price")
-        )
-        .where(
-            and_(
-                AutoAd.make_name.isnot(None),
-                AutoAd.model_name.isnot(None),
-                AutoAd.price.isnot(None),
-                AutoAd.price > 0
-            )
-        )
+        select(Listing.make_raw, Listing.model_raw, func.count().label("count"), func.avg(Listing.price_eur),
+               func.min(Listing.price_eur), func.max(Listing.price_eur))
+        .where(ACTIVE, HAS_PRICE, Listing.make_raw.is_not(None), Listing.model_raw.is_not(None))
     )
-    
-    if make_name:
-        query = query.where(AutoAd.make_name.ilike(f"%{make_name}%"))
-    
-    query = (
-        query
-        .group_by(AutoAd.make_name, AutoAd.model_name)
-        .order_by(func.count(AutoAd.id_ad).desc())
-        .limit(limit)
-    )
-    
-    result = await session.execute(query)
-    return [
-        {
-            "make_name": row[0],
-            "model_name": row[1],
-            "count": row[2],
-            "avg_price": round(row[3], 2) if row[3] else 0,
-            "min_price": row[4] or 0,
-            "max_price": row[5] or 0
-        }
-        for row in result.fetchall()
-    ]
+    if make:
+        query = query.where(Listing.make_raw == make.lower())
+    rows = (await session.execute(
+        query.group_by(Listing.make_raw, Listing.model_raw).order_by(func.count().desc()).limit(limit)
+    )).all()
+    return [{"make": row[0], "model": row[1], "count": row[2], "avg_price_eur": _round(row[3]),
+             "min_price_eur": _round(row[4]), "max_price_eur": _round(row[5])} for row in rows]
 
 
 async def get_market_trends(session: AsyncSession, period: str = "daily", days: int = 30) -> List[Dict[str, Any]]:
-    """Получение трендов рынка за период"""
-    
-    # Определяем формат группировки по дате в зависимости от периода
-    if period == "daily":
-        date_trunc = "day"
-    elif period == "weekly":
-        date_trunc = "week"
-    elif period == "monthly":
-        date_trunc = "month"
-    else:
-        date_trunc = "day"
-    
-    # Дата начала периода
-    start_date = datetime.now() - timedelta(days=days)
-    
-    trends_query = (
-        select(
-            func.date_trunc(date_trunc, AutoAd.createdAt).label("period"),
-            func.count(AutoAd.id_ad).label("count"),
-            func.avg(AutoAd.price).label("avg_price")
-        )
-        .where(
-            and_(
-                AutoAd.createdAt >= start_date,
-                AutoAd.price.isnot(None),
-                AutoAd.price > 0
-            )
-        )
-        .group_by(func.date_trunc(date_trunc, AutoAd.createdAt))
-        .order_by(func.date_trunc(date_trunc, AutoAd.createdAt))
-    )
-    
-    result = await session.execute(trends_query)
-    return [
-        {
-            "date": row[0].isoformat() if row[0] else None,
-            "count": row[1],
-            "avg_price": round(row[2], 2) if row[2] else 0
-        }
-        for row in result.fetchall()
-    ]
+    """Новые объявления и их средняя цена по периодам (по дате первого появления)"""
+    date_trunc = {"daily": "day", "weekly": "week", "monthly": "month"}.get(period, "day")
+    start_date = datetime.now(timezone.utc) - timedelta(days=days)
+    bucket = func.date_trunc(date_trunc, Listing.first_seen_at)
+
+    rows = (await session.execute(
+        select(bucket.label("period"), func.count().label("count"), func.avg(Listing.price_eur))
+        .where(Listing.first_seen_at >= start_date)
+        .group_by(bucket).order_by(bucket)
+    )).all()
+    return [{"date": row[0].isoformat() if row[0] else None, "new_ads": row[1], "avg_price_eur": _round(row[2])}
+            for row in rows]

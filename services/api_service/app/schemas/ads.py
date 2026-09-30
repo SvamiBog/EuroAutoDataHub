@@ -1,78 +1,88 @@
 # services/api_service/app/schemas/ads.py
 from datetime import datetime
-from typing import Optional, List
-from pydantic import BaseModel, Field, ConfigDict
+from decimal import Decimal
+from typing import List, Literal, Optional
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
-class AdBase(BaseModel):
-    """Базовая схема для объявления"""
-    title: Optional[str] = None
-    make_name: Optional[str] = None
-    model_name: Optional[str] = None
-    version: Optional[str] = None
-    generation: Optional[str] = None
-    year: Optional[int] = None
-    price: Optional[int] = None
-    currencyCode: Optional[str] = None
-    fuel_type: Optional[str] = None
-    gearbox: Optional[str] = None
-    mileage: Optional[int] = None
-    engine_capacity: Optional[int] = None
-    color: Optional[str] = None
-    transmission: Optional[str] = None
-    engine_power: Optional[int] = None
-    city: Optional[str] = None
-    region: Optional[str] = None
-    url_ad: Optional[str] = None
-
-
-class AdResponse(AdBase):
-    """Схема для возвращения объявления"""
-    id_ad: str
-    createdAt: datetime
-    source_name: Optional[str] = None
-    sold_at: Optional[datetime] = None
-    
+class ListingResponse(BaseModel):
+    """Объявление (текущее состояние)"""
     model_config = ConfigDict(from_attributes=True)
 
+    id: int
+    source: str
+    source_listing_id: str
+    country_code: str
+    url: Optional[str] = None
+    title: Optional[str] = None
+    make_raw: Optional[str] = None
+    model_raw: Optional[str] = None
+    version_raw: Optional[str] = None
+    generation_raw: Optional[str] = None
+    year: Optional[int] = None
+    mileage_km: Optional[int] = None
+    fuel_type: Optional[str] = None
+    gearbox: Optional[str] = None
+    transmission: Optional[str] = None
+    color: Optional[str] = None
+    engine_capacity_cm3: Optional[int] = None
+    engine_power_hp: Optional[int] = None
+    region: Optional[str] = None
+    city: Optional[str] = None
+    price: Optional[Decimal] = None
+    currency: Optional[str] = None
+    price_eur: Optional[Decimal] = None
+    posted_at: Optional[datetime] = None
+    first_seen_at: datetime
+    last_seen_at: datetime
+    status: str
+    delisted_at: Optional[datetime] = None
 
-class AdListResponse(BaseModel):
-    """Схема для списка объявлений с пагинацией"""
-    items: List[AdResponse]
+
+class ListingListResponse(BaseModel):
+    """Список объявлений с пагинацией"""
+    items: List[ListingResponse]
     total: int
     page: int
     page_size: int
     total_pages: int
 
 
-class AdFilters(BaseModel):
-    """Фильтры для поиска объявлений"""
-    make_name: Optional[str] = None
-    model_name: Optional[str] = None
-    year_from: Optional[int] = Field(None, ge=1900, le=2030)
-    year_to: Optional[int] = Field(None, ge=1900, le=2030)
-    price_from: Optional[int] = Field(None, ge=0)
-    price_to: Optional[int] = Field(None, ge=0)
+class ListingFilters(BaseModel):
+    """Фильтры поиска объявлений"""
+    make: Optional[str] = None  # slug каноничной марки, например "land-rover"
+    model: Optional[str] = None  # slug каноничной модели
+    year_from: Optional[int] = Field(None, ge=1900, le=2100)
+    year_to: Optional[int] = Field(None, ge=1900, le=2100)
+    price_eur_from: Optional[Decimal] = Field(None, ge=0)
+    price_eur_to: Optional[Decimal] = Field(None, ge=0)
     mileage_from: Optional[int] = Field(None, ge=0)
     mileage_to: Optional[int] = Field(None, ge=0)
     fuel_type: Optional[str] = None
     gearbox: Optional[str] = None
     city: Optional[str] = None
     region: Optional[str] = None
-    source_name: Optional[str] = None
-    sold: Optional[bool] = None  # True - проданные, False - активные, None - все
+    source: Optional[str] = None
+    country_code: Optional[str] = None
+    status: Optional[Literal["active", "delisted"]] = "active"  # None — все
 
 
-class AdPriceHistory(BaseModel):
-    """История изменения цены объявления"""
-    timestamp: datetime
-    price: Optional[int]
-    currencyCode: Optional[str]
-    status: Optional[str]
-    
+class ListingEventResponse(BaseModel):
+    """Запись журнала изменений объявления"""
     model_config = ConfigDict(from_attributes=True)
 
+    event_type: str
+    ts: datetime
+    run_id: Optional[str] = None
+    price: Optional[Decimal] = None
+    old_price: Optional[Decimal] = None
+    currency: Optional[str] = None
+    mileage_km: Optional[int] = None
+    old_mileage_km: Optional[int] = None
 
-class AdDetailResponse(AdResponse):
-    """Детальная информация об объявлении с историей"""
-    history: List[AdPriceHistory] = []
+
+class ListingDetailResponse(ListingResponse):
+    """Объявление с журналом изменений"""
+    days_on_market: Optional[int] = None
+    events: List[ListingEventResponse] = []

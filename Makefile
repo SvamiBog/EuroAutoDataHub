@@ -1,68 +1,73 @@
 # EuroAutoDataHub Makefile
 
+DC = docker compose
+
 # Docker Compose команды
 dc-up:
-	uv run docker-compose up -d
+	$(DC) up -d
 
 dc-down:
-	uv run docker-compose down
+	$(DC) down
 
 dc-build:
-	uv run docker-compose build
+	$(DC) build
 
 dc-restart:
 	@echo "--- Перезапуск всех сервисов ---"
-	uv run docker-compose down
-	uv run docker-compose up -d
+	$(DC) down
+	$(DC) up -d
 
 dc-rebuild:
 	@echo "--- Остановка, удаление, пересборка и запуск всех сервисов ---"
-	uv run docker-compose down
-	uv run docker-compose build
-	uv run docker-compose up -d
+	$(DC) down
+	$(DC) build
+	$(DC) up -d
 
 dc-rebuild-service:
 	@echo "--- Пересборка конкретного сервиса (использование: make dc-rebuild-service SERVICE=имя_сервиса) ---"
-	uv run docker-compose stop $(SERVICE)
-	uv run docker-compose build --no-cache $(SERVICE)
-	uv run docker-compose up -d $(SERVICE)
+	$(DC) stop $(SERVICE)
+	$(DC) build --no-cache $(SERVICE)
+	$(DC) up -d $(SERVICE)
 
 dc-fresh:
 	@echo "--- Полная очистка и пересборка (удаляет volumes и images) ---"
-	uv run docker-compose down -v --remove-orphans
-	uv run docker-compose build --no-cache --pull
-	uv run docker-compose up -d
+	$(DC) down -v --remove-orphans
+	$(DC) build --no-cache --pull
+	$(DC) up -d
 
 # Scrapy команды
-SCRAPY_DIR = services/scrapy_spiders/car_scrapers/car_scrapers
+SCRAPY_DIR = services/scrapy_spiders/car_scrapers
+# Ограничить обход марками: make run-oto MAKES=audi,bmw
+MAKES ?=
+MAKES_ARG = $(if $(MAKES),-a makes=$(MAKES))
 
 run-oto-local:
 	@echo "--- Перехожу в $(SCRAPY_DIR) и запускаю Scrapy Local ---"
-	@cd $(SCRAPY_DIR) && uv run scrapy crawl otomoto
+	@cd $(SCRAPY_DIR) && KAFKA_BOOTSTRAP_SERVERS=$${KAFKA_BOOTSTRAP_SERVERS:-localhost:9094} uv run scrapy crawl otomoto $(MAKES_ARG)
 
 run-oto:
 	@echo "--- Запуск Scrapy через главный docker-compose ---"
-	docker-compose run --rm scrapy_runner scrapy crawl otomoto
+	$(DC) run --rm scrapy_runner scrapy crawl otomoto $(MAKES_ARG)
 
 # Логи сервисов
-logs-processor:
-	uv run docker-compose logs -f data_processor
+logs-ingestor:
+	$(DC) logs -f ingestor
 
-logs-updater:
-	uv run docker-compose logs -f status_updater
+logs-scheduler:
+	$(DC) logs -f scheduler
 
 logs-api:
-	uv run docker-compose logs -f api_service_app
+	$(DC) logs -f api_service
 
 logs-kafka:
-	uv run docker-compose logs -f kafka_broker
+	$(DC) logs -f kafka_broker
 
 logs-db:
-	uv run docker-compose logs -f db_postgres
+	$(DC) logs -f db_postgres
 
 # API команды
 api-dev:
-	cd services/api_service && uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+	cd services/api_service && uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 api-test:
 	curl -X GET "http://localhost:8000/health" -H "accept: application/json"
@@ -73,41 +78,60 @@ api-docs:
 
 # Миграции базы данных
 db-upgrade:
-	uv run docker-compose run --rm api_migrations alembic upgrade head
+	$(DC) run --rm api_migrations alembic upgrade head
 
 db-revision:
-	uv run docker-compose run --rm api_migrations alembic revision --autogenerate -m "$(msg)"
+	$(DC) run --rm api_migrations alembic revision --autogenerate -m "$(msg)"
+
+# Заполнить справочник марок (vehicle_make) из справочника паука
+db-seed-makes:
+	cd services/data_processor && uv run python -m app.seed_makes ../scrapy_spiders/car_scrapers/car_scrapers/data/otomoto_makes.json
 
 # Проверка статуса сервисов
 status:
 	@echo "--- Статус всех сервисов ---"
-	uv run docker-compose ps
+	$(DC) ps
 
-# Основная команда для pytest
-.PHONY: test test-pytest test-unittest test-verbose test-coverage test-warnings
+# Тесты: у сервисов одинаковое имя пакета `app`, поэтому каждый сервис тестируется отдельным процессом
+define run_tests
+	cd libs/eadh_common && uv run pytest tests $(1)
+	cd $(SCRAPY_DIR) && uv run pytest car_scrapers/tests $(1)
+	cd services/data_processor && uv run pytest tests $(1)
+	cd services/api_service && uv run pytest tests $(1)
+endef
+
+.PHONY: test test-warnings test-strict test-coverage test-quiet test-verbose lint e2e
 test:
 	@echo "--- 🚀 Запуск всех тестов через pytest ---"
-	PYTHONPATH=. uv run pytest services/ -v 
+	$(call run_tests,-v)
 
 test-warnings:
 	@echo "--- 🚨 Запуск тестов с показом предупреждений ---"
-	PYTHONPATH=. uv run pytest services/ -v -s --tb=short
+	$(call run_tests,-v -s --tb=short)
 
 test-strict:
 	@echo "--- 🚫 Запуск тестов с ошибками на предупреждения ---"
-	PYTHONPATH=. uv run pytest services/ -v -W error::DeprecationWarning
+	$(call run_tests,-v -W error::DeprecationWarning)
 
 test-coverage:
 	@echo "--- 📊 Запуск тестов с покрытием ---"
-	PYTHONPATH=. uv run pytest services/ -v --cov=services --cov-report=html
+	$(call run_tests,-v --cov=. --cov-report=term-missing --cov-report=html)
 
 test-quiet:
 	@echo "--- 🤫 Запуск тестов без предупреждений ---"
-	PYTHONPATH=. uv run pytest services/ -v --disable-warnings
+	$(call run_tests,-q --disable-warnings)
 
 test-verbose:
 	@echo "--- 📝 Подробный запуск тестов ---"
-	PYTHONPATH=. uv run pytest services/ -vv -s --tb=long
+	$(call run_tests,-vv -s --tb=long)
+
+# Сквозная проверка паук -> Kafka -> ingestor -> PostgreSQL на запущенном стеке (make dc-up)
+e2e:
+	KAFKA_BOOTSTRAP_SERVERS=$${KAFKA_BOOTSTRAP_SERVERS:-localhost:9094} uv run python tests/e2e/run_e2e.py
+
+# Минимальный линт: синтаксические ошибки и неопределенные имена
+lint:
+	uv run ruff check --select E9,F63,F7,F82 services libs tests
 
 
 # Помощь
@@ -116,17 +140,18 @@ help:
 	@echo "  dc-up              - Запуск всех сервисов"
 	@echo "  dc-down            - Остановка всех сервисов"
 	@echo "  dc-build           - Сборка всех сервисов"
-	@echo "  dc-rebuild         - Остановка, сборка и запуск"
 	@echo "  dc-restart         - Перезапуск всех сервисов"
-	@echo "  dc-rebuild-all     - Полная пересборка без кеша"
-	@echo "  dc-fresh           - Полная очистка и пересборка"
-	@echo "  restart-scrapy     - Перезапуск только Scrapy"
-	@echo "  restart-processor  - Перезапуск только Data Processor"
-	@echo "  restart-updater    - Перезапуск только Status Updater"
-	@echo "  run-oto-docker     - Запуск парсера Otomoto в Docker"
+	@echo "  dc-rebuild         - Остановка, сборка и запуск"
+	@echo "  dc-rebuild-service - Пересборка одного сервиса (SERVICE=имя)"
+	@echo "  dc-fresh           - Полная очистка и пересборка (удаляет volumes)"
 	@echo "  status             - Показать статус всех сервисов"
-	@echo "  logs-all           - Показать логи всех сервисов"
-	@echo "  clean              - Очистить неиспользуемые ресурсы"
+	@echo ""
+	@echo "Парсинг:"
+	@echo "  run-oto            - Запуск парсера Otomoto в Docker (MAKES=audi,bmw — только эти марки)"
+	@echo "  run-oto-local      - Запуск парсера Otomoto локально (Kafka на localhost:9094)"
+	@echo ""
+	@echo "Логи:"
+	@echo "  logs-ingestor | logs-scheduler | logs-api | logs-kafka | logs-db"
 	@echo ""
 	@echo "API команды:"
 	@echo "  api-dev            - Запуск API в режиме разработки"
@@ -135,7 +160,8 @@ help:
 	@echo ""
 	@echo "База данных:"
 	@echo "  db-upgrade         - Применение миграций"
-	@echo "  db-revision        - Создание новой миграции"
+	@echo "  db-revision        - Создание новой миграции (msg=описание)"
+	@echo "  db-seed-makes      - Заполнить справочник марок"
 	@echo ""
 	@echo "Тестирование:"
 	@echo "  test               - Запуск всех тестов"
@@ -144,3 +170,5 @@ help:
 	@echo "  test-strict        - Запуск тестов с ошибками на предупреждения"
 	@echo "  test-verbose       - Подробный запуск тестов"
 	@echo "  test-coverage      - Запуск тестов с покрытием кода"
+	@echo "  e2e                - Сквозная проверка на запущенном стеке (make dc-up)"
+	@echo "  lint               - Минимальный линт (синтаксис, неопределенные имена)"

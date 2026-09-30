@@ -34,21 +34,9 @@ async def database_health(session: AsyncSession = Depends(get_session)):
         # Проверяем основные таблицы
         tables_check = {}
         
-        # Проверка таблицы auto_ad
-        result = await session.execute(text("SELECT COUNT(*) FROM auto_ad"))
-        tables_check["auto_ad"] = result.scalar()
-        
-        # Проверка таблицы car_make
-        result = await session.execute(text("SELECT COUNT(*) FROM car_make"))
-        tables_check["car_make"] = result.scalar()
-        
-        # Проверка таблицы car_model
-        result = await session.execute(text("SELECT COUNT(*) FROM car_model"))
-        tables_check["car_model"] = result.scalar()
-        
-        # Проверка таблицы auto_ad_history
-        result = await session.execute(text("SELECT COUNT(*) FROM auto_ad_history"))
-        tables_check["auto_ad_history"] = result.scalar()
+        for table in ("listing", "listing_event", "crawl_run", "crawl_shard", "vehicle_make", "fx_rate"):
+            result = await session.execute(text(f"SELECT COUNT(*) FROM {table}"))
+            tables_check[table] = result.scalar()
         
         return {
             "status": "healthy",

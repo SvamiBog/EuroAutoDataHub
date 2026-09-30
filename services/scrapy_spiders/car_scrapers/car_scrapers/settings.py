@@ -7,6 +7,8 @@
 #     https://docs.scrapy.org/en/latest/topics/downloader-middleware.html
 #     https://docs.scrapy.org/en/latest/topics/spider-middleware.html
 
+import os
+
 BOT_NAME = "car_scrapers"
 
 SPIDER_MODULES = ["car_scrapers.spiders"]
@@ -15,24 +17,32 @@ NEWSPIDER_MODULE = "car_scrapers.spiders"
 ADDONS = {}
 
 
-# Crawl responsibly by identifying yourself (and your website) on the user-agent
-USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) ' \
-             'Chrome/98.0.4758.109 Safari/537.36 OPR/84.0.4316.50'
+# User-Agent: паук выбирает один из списка на весь запуск (актуальные версии браузеров)
+USER_AGENTS = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) '
+    'Chrome/140.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) '
+    'Chrome/140.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:143.0) Gecko/20100101 Firefox/143.0',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) '
+    'Version/18.6 Safari/605.1.15',
+]
+USER_AGENT = USER_AGENTS[0]
 
-# Obey robots.txt rules
-ROBOTSTXT_OBEY = False
+# Соблюдать robots.txt: решение по каждой площадке (см. docs/ROADMAP.md, 1.4 и 4.1)
+ROBOTSTXT_OBEY = os.getenv("SCRAPY_ROBOTSTXT_OBEY", "false").lower() == "true"
 
 # Configure maximum concurrent requests performed by Scrapy (default: 16)
-CONCURRENT_REQUESTS = 32
+CONCURRENT_REQUESTS = int(os.getenv("SCRAPY_CONCURRENT_REQUESTS", "32"))
 
 # Configure a delay for requests for the same website (default: 0)
 # See https://docs.scrapy.org/en/latest/topics/settings.html#download-delay
 # See also autothrottle settings and docs
-DOWNLOAD_DELAY = 0.1
+DOWNLOAD_DELAY = float(os.getenv("SCRAPY_DOWNLOAD_DELAY", "0.1"))
 
 
 # The download delay setting will honor only one of:
-CONCURRENT_REQUESTS_PER_DOMAIN = 8
+CONCURRENT_REQUESTS_PER_DOMAIN = int(os.getenv("SCRAPY_CONCURRENT_REQUESTS_PER_DOMAIN", "8"))
 #CONCURRENT_REQUESTS_PER_IP = 16
 
 # Disable cookies (enabled by default)
@@ -71,15 +81,40 @@ RETRY_TIMES = 2
 RETRY_HTTP_CODES = [500, 502, 503, 504, 408, 429]
 DOWNLOAD_TIMEOUT = 180
 
-CONSECUTIVE_403_LIMIT = 3
-PAUSE_DURATION = 300
+# Обработка блокировок: после CONSECUTIVE_403_LIMIT ответов 403 подряд движок Scrapy
+# ставится на паузу на PAUSE_DURATION секунд, заблокированный запрос повторяется.
+# Каждый запрос повторяется не больше MAX_403_RETRIES_PER_REQUEST раз,
+# после MAX_PAUSES пауз за один запуск обход останавливается (сайт устойчиво блокирует).
+CONSECUTIVE_403_LIMIT = int(os.getenv("SCRAPY_CONSECUTIVE_403_LIMIT", "3"))
+PAUSE_DURATION = int(os.getenv("SCRAPY_PAUSE_DURATION", "300"))
+MAX_403_RETRIES_PER_REQUEST = int(os.getenv("SCRAPY_MAX_403_RETRIES_PER_REQUEST", "3"))
+MAX_PAUSES = int(os.getenv("SCRAPY_MAX_PAUSES", "5"))
+
+# Повторы запроса при ошибках GraphQL ("Internal Error")
+GRAPHQL_MAX_RETRIES = int(os.getenv("SCRAPY_GRAPHQL_MAX_RETRIES", "3"))
+
+# Марка считается собранной полностью, если все страницы получены и собрано
+# не меньше этой доли от totalCount (объявления сдвигаются между страницами во время обхода)
+MIN_MAKE_COMPLETENESS = float(os.getenv("SCRAPY_MIN_MAKE_COMPLETENESS", "0.95"))
+
+# Если у шарда (марки) больше страниц, он делится по годам выпуска. Площадки обычно
+# ограничивают глубину выдачи; лимит otomoto нужно подтвердить на живом сайте
+MAX_PAGES_PER_SHARD = int(os.getenv("SCRAPY_MAX_PAGES_PER_SHARD", "500"))
+
+# Сырые ответы площадки (gzip) для переразбора и отладки; пусто — не сохранять
+RAW_RESPONSES_DIR = os.getenv("SCRAPY_RAW_RESPONSES_DIR", "")
+RAW_RESPONSES_TTL_DAYS = int(os.getenv("SCRAPY_RAW_RESPONSES_TTL_DAYS", "14"))
 
 # Loging setting
 LOG_ENABLED = True
 LOGSTATS_INTERVAL = 0
 LOG_SHORT_NAMES = True
-LOG_LEVEL = 'WARNING'
-LOG_FILE = 'otomoto_spider.log'
+LOG_LEVEL = os.getenv("SCRAPY_LOG_LEVEL", "INFO")
+# Пустое значение SCRAPY_LOG_FILE — логи в stderr (удобно в Docker)
+LOG_FILE = os.getenv("SCRAPY_LOG_FILE", "otomoto_spider.log") or None
+
+# Rich прогресс-бар в консоли: auto — только если stdout это терминал
+PROGRESS_BAR = os.getenv("SCRAPY_PROGRESS_BAR", "auto")
 
 # Configure item pipelines
 # See https://docs.scrapy.org/en/latest/topics/item-pipeline.html
@@ -88,13 +123,19 @@ ITEM_PIPELINES = {
 }
 
 # --- Настройки для Kafka ---
-KAFKA_BOOTSTRAP_SERVERS = ['kafka_broker:9092']
+# Внутри docker-compose: kafka_broker:9092, с хост-машины: localhost:9094
+KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka_broker:9092").split(",")
 
-# Имя топика Kafka, куда будут отправляться объявления
-KAFKA_TOPIC_ADS = 'parsed_car_ads'
+# Топики по контракту libs/eadh_common/messages.py
+KAFKA_TOPIC_OBSERVATIONS = os.getenv("KAFKA_TOPIC_OBSERVATIONS", "listing_observations")
+KAFKA_TOPIC_CRAWL_EVENTS = os.getenv("KAFKA_TOPIC_CRAWL_EVENTS", "crawl_events")
 
-# Имя топика для отправки списка активных ID
-KAFKA_TOPIC_ACTIVE_IDS = 'active_car_ids'
+# Дополнительные параметры KafkaProducer
+KAFKA_PRODUCER_CONFIG = {
+    "acks": "all",
+    "retries": 5,
+    "linger_ms": 50,
+}
 
 # Enable and configure the AutoThrottle extension (disabled by default)
 # See https://docs.scrapy.org/en/latest/topics/autothrottle.html
@@ -107,7 +148,7 @@ AUTOTHROTTLE_MAX_DELAY = 3
 # each remote server
 AUTOTHROTTLE_TARGET_CONCURRENCY = 16
 # Enable showing throttling stats for every response received:
-AUTOTHROTTLE_DEBUG = True
+AUTOTHROTTLE_DEBUG = os.getenv("SCRAPY_AUTOTHROTTLE_DEBUG", "false").lower() == "true"
 
 # Enable and configure HTTP caching (disabled by default)
 # See https://docs.scrapy.org/en/latest/topics/downloader-middleware.html#httpcache-middleware-settings

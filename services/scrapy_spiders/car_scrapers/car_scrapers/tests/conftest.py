@@ -2,8 +2,16 @@ import pytest
 import json
 from unittest.mock import MagicMock, patch
 from scrapy.http import Request, TextResponse
+from scrapy.utils.reactor import install_reactor
+from twisted.internet.error import ReactorAlreadyInstalledError
 
 from ..spiders.otomoto import OtomotoSpider
+
+# get_crawler() в Scrapy 2.13 требует установленный reactor (тот же, что в settings.py)
+try:
+    install_reactor("twisted.internet.asyncioreactor.AsyncioSelectorReactor")
+except ReactorAlreadyInstalledError:
+    pass
 
 
 
@@ -38,7 +46,7 @@ def mock_spider():
     spider.name = 'otomoto'
     spider.allowed_domains = ['otomoto.pl']
     spider.make_list = ['audi', 'bmw', 'mercedes-benz']
-    spider.current_make_index = 0
+    spider.shards_done = 0
     spider.max_consecutive_403 = 3
     spider.pause_duration = 300
     spider.scraped_ids = set()

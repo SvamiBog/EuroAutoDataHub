@@ -1,35 +1,8 @@
 # EuroAutoDataHub/docker-compose.yml
-version: '3.8'
-
+#
+# make dc-up      — PostgreSQL, Kafka, миграции, ingestor, API и планировщик обходов
+# make run-oto    — разовый обход вручную (сервис scrapy_runner, профиль tools)
 services:
-  zookeeper:
-    image: confluentinc/cp-zookeeper:7.3.2 # Используйте актуальную версию
-    container_name: zookeeper
-    environment:
-      ZOOKEEPER_CLIENT_PORT: 2181
-      ZOOKEEPER_TICK_TIME: 2000
-    ports:
-      - "2181:2181"
-
-  kafka_broker:
-    image: confluentinc/cp-kafka:7.3.2 # Используйте актуальную версию
-    container_name: kafka_broker
-    depends_on:
-      - zookeeper
-    ports:
-      # Порт для доступа с хост-машины (если Scrapy запускается с хоста)
-      - "9094:9094"
-    environment:
-      KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
-      # Адрес, который Kafka будет анонсировать клиентам ВНУТРИ Docker сети
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka_broker:9092,PLAINTEXT_HOST://localhost:9094
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
-      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-      KAFKA_CREATE_TOPICS: "parsed_car_ads:1:1,active_car_ids:1:1"
-
   db_postgres:
     image: postgres:15-alpine
     container_name: euroautodatahub_postgres_db
@@ -49,107 +22,63 @@ services:
       timeout: 5s
       retries: 5
 
-  data_processor:
-    build:
-      context: .
-      dockerfile: ./services/data_processor/Dockerfile
-    container_name: data_processor_service
-    restart: on-failure
-    depends_on:
-      db_postgres:
-        condition: service_healthy
-      kafka_broker:
-        condition: service_started
-    environment:
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - POSTGRES_DB=${POSTGRES_DB}
-      - POSTGRES_SERVER=db_postgres
-      - POSTGRES_PORT=5432
-      - KAFKA_BOOTSTRAP_SERVERS=kafka_broker:9092
-      - KAFKA_TOPIC_ADS=parsed_car_ads
-      - KAFKA_CONSUMER_GROUP=ad-processor-group
-    volumes:
-      - ./services/data_processor/app:/app/app
-      - ./services/api_service/app/db/models.py:/app/app/models.py
-
-  status_updater:
-    build:
-      context: .
-      dockerfile: ./services/data_processor/Dockerfile
-    container_name: status_updater_service
-    command: python -m app.status_consumer
-    restart: on-failure
-    depends_on:
-      db_postgres:
-        condition: service_healthy
-      kafka_broker:
-        condition: service_started
-    environment:
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - POSTGRES_DB=${POSTGRES_DB}
-      - POSTGRES_SERVER=db_postgres
-      - POSTGRES_PORT=5432
-      - KAFKA_BOOTSTRAP_SERVERS=kafka_broker:9092
-      - KAFKA_TOPIC_ADS=parsed_car_ads
-      - KAFKA_CONSUMER_GROUP=ad-processor-group
-    volumes:
-      - ./services/data_processor/app:/app/app
-      - ./services/api_service/app/db/models.py:/app/app/models.py
-
-  scrapy_runner:
-    build:
-      context: .
-      dockerfile: ./services/scrapy_spiders/car_scrapers/Dockerfile
-    container_name: scrapy_runner_service
-    depends_on:
-      db_postgres:
-        condition: service_healthy
-      kafka_broker:
-        condition: service_started
-    environment:
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - POSTGRES_DB=${POSTGRES_DB}
-      - POSTGRES_SERVER=db_postgres
-      - POSTGRES_PORT=5432
-      - KAFKA_BOOTSTRAP_SERVERS=kafka_broker:9092
-      # Добавляем PYTHONPATH
-      - PYTHONPATH=/usr/src/app:/usr/src/data_processor
-    volumes:
-      - ./services/scrapy_spiders/car_scrapers/car_scrapers:/usr/src/app/car_scrapers
-      - ./services/data_processor:/usr/src/data_processor
-      - ./services/api_service/app/db/models.py:/usr/src/data_processor/app/models.py
-    # Добавляем это:
-    env_file:
-      - .env
-
-  api_service:
-    build:
-      context: ./services/api_service
-      dockerfile: Dockerfile
-    container_name: api_service_app
+  # Kafka в режиме KRaft (без ZooKeeper): один узел — брокер и контроллер
+  kafka_broker:
+    image: confluentinc/cp-kafka:7.7.1
+    container_name: kafka_broker
     ports:
-      - "8000:8000"
-    depends_on:
-      db_postgres:
-        condition: service_healthy
+      # Порт для доступа с хост-машины (если Scrapy запускается с хоста)
+      - "9094:9094"
     environment:
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - POSTGRES_DB=${POSTGRES_DB}
-      - POSTGRES_SERVER=db_postgres
-      - POSTGRES_PORT=5432
+      # ID кластера KRaft: UUID в base64 (22 символа)
+      CLUSTER_ID: "sTIfD2AcQZKZUFKLMFqGrw"
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka_broker:29093"
+      KAFKA_LISTENERS: "PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:29093,PLAINTEXT_HOST://0.0.0.0:9094"
+      # Адрес, который Kafka анонсирует клиентам: внутри Docker сети и с хост-машины
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka_broker:9092,PLAINTEXT_HOST://localhost:9094"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      # Неделя истории: хватает, чтобы переобработать сообщения после сбоя
+      KAFKA_LOG_RETENTION_HOURS: 168
     volumes:
-      - ./services/api_service:/app
-    working_dir: /app
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: [ "CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 > /dev/null 2>&1" ]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 20s
     restart: unless-stopped
+
+  # Создает топики контракта (libs/eadh_common/messages.py) с нужным числом партиций
+  kafka_init:
+    image: confluentinc/cp-kafka:7.7.1
+    container_name: kafka_init
+    depends_on:
+      kafka_broker:
+        condition: service_healthy
+    entrypoint: [ "/bin/bash", "-c" ]
+    command:
+      - |
+        set -e
+        for spec in listing_observations:6 crawl_events:1 ingest_dlq:1; do
+          kafka-topics --bootstrap-server kafka_broker:9092 --create --if-not-exists \
+            --topic "$${spec%%:*}" --partitions "$${spec##*:}" --replication-factor 1
+        done
+        kafka-topics --bootstrap-server kafka_broker:9092 --list
+    restart: "no"
 
   api_migrations:
     build:
-      context: ./services/api_service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./services/api_service/Dockerfile
     container_name: api_service_migrations
     depends_on:
       db_postgres:
@@ -165,5 +94,100 @@ services:
     working_dir: /app
     command: alembic upgrade head
 
+  # Приём сообщений из Kafka, жизненный цикл объявлений, курсы ЕЦБ, отчёты о прогонах
+  ingestor:
+    build:
+      context: .
+      dockerfile: ./services/data_processor/Dockerfile
+    container_name: ingestor_service
+    restart: on-failure
+    depends_on:
+      db_postgres:
+        condition: service_healthy
+      kafka_init:
+        condition: service_completed_successfully
+      api_migrations:
+        condition: service_completed_successfully
+    # MAX_DELIST_RATIO, TELEGRAM_* и другие настройки — из .env (см. .env.example)
+    env_file:
+      - .env
+    environment:
+      - POSTGRES_SERVER=db_postgres
+      - POSTGRES_PORT=5432
+      - KAFKA_BOOTSTRAP_SERVERS=kafka_broker:9092
+    volumes:
+      - ./services/data_processor/app:/app/app
+
+  api_service:
+    build:
+      context: .
+      dockerfile: ./services/api_service/Dockerfile
+    container_name: api_service_app
+    ports:
+      - "8000:8000"
+    depends_on:
+      db_postgres:
+        condition: service_healthy
+      api_migrations:
+        condition: service_completed_successfully
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_SERVER=db_postgres
+      - POSTGRES_PORT=5432
+    volumes:
+      - ./services/api_service:/app
+    working_dir: /app
+    restart: unless-stopped
+
+  # Ежедневный запуск обходов (CRAWL_AT, CRAWL_TZ, CRAWL_SPIDERS — в .env)
+  scheduler:
+    build:
+      context: .
+      dockerfile: ./services/scrapy_spiders/car_scrapers/Dockerfile
+    container_name: crawl_scheduler
+    command: python -m car_scrapers.scheduler
+    depends_on:
+      kafka_init:
+        condition: service_completed_successfully
+    env_file:
+      - .env
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka_broker:9092
+      # В Docker логи пишем в stdout, прогресс-бар выключаем
+      - SCRAPY_LOG_FILE=
+      - SCRAPY_PROGRESS_BAR=false
+      # Сырые ответы площадки (gzip, 14 дней) для переразбора и отладки
+      - SCRAPY_RAW_RESPONSES_DIR=/data/raw
+    volumes:
+      - ./services/scrapy_spiders/car_scrapers/car_scrapers:/usr/src/app/car_scrapers
+      - raw_responses:/data/raw
+    restart: unless-stopped
+
+  # Разовый обход вручную: make run-oto MAKES=audi,bmw
+  scrapy_runner:
+    build:
+      context: .
+      dockerfile: ./services/scrapy_spiders/car_scrapers/Dockerfile
+    container_name: scrapy_runner_service
+    profiles: [ "tools" ]
+    depends_on:
+      kafka_init:
+        condition: service_completed_successfully
+    # SCRAPY_* из .env настраивают лимиты, паузы и логи (см. .env.example)
+    env_file:
+      - .env
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka_broker:9092
+      # В Docker логи пишем в stdout, прогресс-бар выключаем
+      - SCRAPY_LOG_FILE=
+      - SCRAPY_PROGRESS_BAR=false
+    volumes:
+      - ./services/scrapy_spiders/car_scrapers/car_scrapers:/usr/src/app/car_scrapers
+      - raw_responses:/data/raw
+
 volumes:
   postgres_data:
+  kafka_data:
+  raw_responses:

@@ -1,22 +1,15 @@
 from logging.config import fileConfig
-import os
-import sys
-
 from sqlalchemy import engine_from_config
 from sqlalchemy import pool
 
 from alembic import context
 
 
-current_path = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.join(current_path, '..', '..') # Путь к services/api_service/
-app_path = os.path.join(project_root, 'app')          # Путь к services/api_service/app/
-sys.path.insert(0, project_root) # Добавляем корень сервиса
-# sys.path.insert(0, app_path) # Может понадобиться, если импорты в models.py относительные
-
 from sqlmodel import SQLModel # Импортируем SQLModel
 
-from app.db import models as app_models
+# Общая модель данных всех сервисов (libs/eadh_common)
+from eadh_common import models as common_models  # noqa: F401  (регистрирует таблицы)
+from eadh_common.settings import DatabaseSettings
 
 
 # this is the Alembic Config object, which provides
@@ -27,6 +20,19 @@ config = context.config
 # This line sets up loggers basically.
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
+
+
+# URL для миграций берётся из окружения (POSTGRES_* или SYNC_DATABASE_URL), а не из alembic.ini.
+# ConfigParser трактует '%' как интерполяцию, поэтому экранируем
+config.set_main_option("sqlalchemy.url", DatabaseSettings().sync_database_url.replace("%", "%%"))
+
+
+def include_object(obj, name, type_, reflected, compare_to):
+    """Таблицы legacy_* (данные до модели v2) хранятся для отката и в модели не описаны."""
+    if type_ == "table" and name.startswith("legacy_"):
+        return False
+    return True
+
 
 # add your model's MetaData object here
 # for 'autogenerate' support
@@ -56,6 +62,7 @@ def run_migrations_offline() -> None:
     context.configure(
         url=url,
         target_metadata=target_metadata,
+        include_object=include_object,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
     )
@@ -79,7 +86,7 @@ def run_migrations_online() -> None:
 
     with connectable.connect() as connection:
         context.configure(
-            connection=connection, target_metadata=target_metadata
+            connection=connection, target_metadata=target_metadata, include_object=include_object
         )
 
         with context.begin_transaction():

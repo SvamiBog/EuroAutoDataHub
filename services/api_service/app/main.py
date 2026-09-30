@@ -1,5 +1,7 @@
 # services/api_service/app/main.py
 import logging
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
@@ -13,6 +15,16 @@ from app.routers import ads, stats, health
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """События при запуске и остановке приложения"""
+    logger.info("Starting EuroAutoDataHub API...")
+    logger.info(f"Database URL: {settings.database_url.split('@')[1] if '@' in settings.database_url else 'masked'}")
+    yield
+    logger.info("Shutting down EuroAutoDataHub API...")
+
+
 # Создание экземпляра FastAPI приложения
 app = FastAPI(
     title="EuroAutoDataHub API",
@@ -20,6 +32,7 @@ app = FastAPI(
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
 # Добавление middleware
@@ -54,17 +67,6 @@ async def root():
             "health": "/health"
         }
     }
-
-@app.on_event("startup")
-async def startup_event():
-    """События при запуске приложения"""
-    logger.info("Starting EuroAutoDataHub API...")
-    logger.info(f"Database URL: {settings.database_url.split('@')[1] if '@' in settings.database_url else 'masked'}")
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """События при остановке приложения"""
-    logger.info("Shutting down EuroAutoDataHub API...")
 
 if __name__ == "__main__":
     uvicorn.run(
