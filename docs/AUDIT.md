@@ -45,7 +45,7 @@
 
 | # | Проблема | Где | Последствие | Этап |
 |---|----------|-----|-------------|------|
-| C1 | Импорт `fastapi.middleware.base` (такого модуля нет, нужен `starlette.middleware.base`) | `services/api_service/app/core/middleware.py:5` | API падает при старте | 0.1 |
+| C1 | Импорт `fastapi.middleware.base` (такого модуля нет, нужен `starlette.middleware.base`). Кроме того, в `requirements.txt` API нет `pydantic-settings`, а в Dockerfile нет команды запуска | `services/api_service/app/core/middleware.py:5`, `requirements.txt`, `Dockerfile` | API падает при старте; в Docker контейнер не запускает сервер вовсе | 0.1 |
 | C2 | `sqlalchemy.url = postgresql+psycopg2://max:1234@localhost:5433/...` захардкожен; `migrations/env.py` не читает настройки из окружения | `services/api_service/alembic.ini:66`, `migrations/env.py` | Контейнер `api_migrations` не может применить миграции; пароль лежит в репозитории | 0.2 |
 | C3 | Поиск «непроданных» по подстроке: `make_name.ilike(f"%{make_str}%")` | `services/data_processor/app/db_updater.py:33` | Обход `rover` «продаёт» все `land-rover`, обход `zuk` — все `suzuki` (**воспроизведено**) | 0.7 |
 | C4 | `ActiveIdsItem` отправляется даже при неполном обходе марки: ошибки 403, JSON и GraphQL засчитываются как «страница обработана». Если упала первая страница, уходит **пустой** список | `spiders/otomoto.py` (`_handle_page_completion`, `_handle_make_completion`) | Все активные объявления марки, которых нет в неполном списке, помечаются проданными | 0.5, 0.7 |
@@ -82,10 +82,16 @@
 | M8 | Kafka 7.3 на ZooKeeper; устаревший ключ `version:` в compose | `docker-compose.yml` | 1.3 |
 | M9 | Файлы `__initi__.py` (опечатка) по всему репозиторию не работают как `__init__.py` | повсеместно | 0.10 |
 | M10 | README — плейсхолдер, нет `.env.example`, не описан запуск | `README.md` | 0.10 |
-| M11 | `pyproject.toml` требует Python ≥3.12, а Docker‑образы на 3.11. Зависимости разнесены по 4 файлам без общего lock. `scrapy>=2.11`, хотя код использует `async def start()` из Scrapy 2.13 | `pyproject.toml`, `requirements*.txt` | 0.8 |
+| M11 | `pyproject.toml` требует Python ≥3.12, а Docker‑образы на 3.11. Зависимости разнесены по 4 файлам без общего lock. `scrapy>=2.11`, хотя код использует `async def start()` из Scrapy 2.13; Twisted не закреплён, а Scrapy 2.13.0 с Twisted 25.x не может загрузить HTTP‑обработчик | `pyproject.toml`, `requirements*.txt` | 0.8 |
 | M12 | API: `sort_by` принимает любое имя атрибута (`sort_by=history` даёт 500); устаревшие `regex=` и `on_event`; нет аутентификации и rate limiting | `routers/ads.py`, `main.py` | 2.3, 6 |
 
-## 4. Что сделано хорошо
+## 4. Статус исправлений
+
+Этап 0 роадмапа выполнен 2026‑09‑30: закрыты C1–C7, H3–H6, M2–M4, M9–M11 и часть M12.
+Остальное запланировано на этапы 1–6 (см. колонку «Этап»). Подробности — в
+[журнале выполнения](ROADMAP.md#журнал-выполнения).
+
+## 5. Что сделано хорошо
 
 - Разделение на сервисы и асинхронная доставка через Kafka.
 - Использование GraphQL API вместо парсинга HTML: стабильнее и дешевле.
@@ -93,7 +99,7 @@
 - Pydantic‑схема на входе консьюмера, Alembic‑миграции, healthcheck у PostgreSQL.
 - Есть заготовки для истории цен (`auto_ad_history`) и статистики API.
 
-## 5. Рекомендации по архитектуре (кратко)
+## 6. Рекомендации по архитектуре (кратко)
 
 Подробно — в [PRD, раздел 8](PRD.md#8-целевая-архитектура).
 
