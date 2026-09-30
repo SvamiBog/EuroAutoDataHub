@@ -67,6 +67,8 @@ TELNETCONSOLE_ENABLED = False
 # See https://docs.scrapy.org/en/latest/topics/downloader-middleware.html
 DOWNLOADER_MIDDLEWARES = {
     "car_scrapers.middlewares.CarScrapersDownloaderMiddleware": 543,
+    # ротация прокси: до HttpProxyMiddleware (750); без списка прокси отключается сама
+    "car_scrapers.proxy.ProxyRotationMiddleware": 610,
 }
 
 # Enable or disable extensions
@@ -90,6 +92,15 @@ PAUSE_DURATION = int(os.getenv("SCRAPY_PAUSE_DURATION", "300"))
 MAX_403_RETRIES_PER_REQUEST = int(os.getenv("SCRAPY_MAX_403_RETRIES_PER_REQUEST", "3"))
 MAX_PAUSES = int(os.getenv("SCRAPY_MAX_PAUSES", "5"))
 
+# Хэш persisted query GraphQL площадок на платформе otomoto. Меняется при обновлении фронтенда площадки;
+# пусто — хэш из кода паука. Смена хэша без обновления даёт критический алерт api_errors в отчёте о прогоне
+OTOMOTO_QUERY_HASH = os.getenv("SCRAPY_OTOMOTO_QUERY_HASH", "")
+AUTOVIT_QUERY_HASH = os.getenv("SCRAPY_AUTOVIT_QUERY_HASH", "")
+STANDVIRTUAL_QUERY_HASH = os.getenv("SCRAPY_STANDVIRTUAL_QUERY_HASH", "")
+
+# AutoScout24: страны обхода (ISO через запятую): DE, AT, BE, ES, FR, IT, LU, NL; пусто — все
+AUTOSCOUT24_COUNTRIES = os.getenv("SCRAPY_AUTOSCOUT24_COUNTRIES", "")
+
 # Повторы запроса при ошибках GraphQL ("Internal Error")
 GRAPHQL_MAX_RETRIES = int(os.getenv("SCRAPY_GRAPHQL_MAX_RETRIES", "3"))
 
@@ -100,6 +111,29 @@ MIN_MAKE_COMPLETENESS = float(os.getenv("SCRAPY_MIN_MAKE_COMPLETENESS", "0.95"))
 # Если у шарда (марки) больше страниц, он делится по годам выпуска. Площадки обычно
 # ограничивают глубину выдачи; лимит otomoto нужно подтвердить на живом сайте
 MAX_PAGES_PER_SHARD = int(os.getenv("SCRAPY_MAX_PAGES_PER_SHARD", "500"))
+
+# Если столько шардов подряд не удалось начать (ошибка API, HTTP, блокировка), обход останавливается
+# с причиной shard_failures: вероятно, площадка изменила API. 0 — не останавливать
+MAX_CONSECUTIVE_FAILED_SHARDS = int(os.getenv("SCRAPY_MAX_CONSECUTIVE_FAILED_SHARDS", "5"))
+
+# --- Прокси (car_scrapers/proxy.py) ---
+# Запросы распределяются по прокси; у каждого свой download slot, поэтому CONCURRENT_REQUESTS_PER_DOMAIN,
+# DOWNLOAD_DELAY и AutoThrottle ограничивают нагрузку на каждый IP. Общий предел — CONCURRENT_REQUESTS.
+# SCRAPY_PROXIES: http://user:pass@host:port через запятую, пробел или перенос строки; direct — свой IP.
+PROXIES = os.getenv("SCRAPY_PROXIES", "").replace(",", " ").split()
+# Файл со списком прокси (по одному в строке, # — комментарий)
+PROXY_FILE = os.getenv("SCRAPY_PROXY_FILE", "")
+# Ответы, которые считаются баном IP: запрос повторяется через другой прокси
+PROXY_BAN_CODES = [int(c) for c in os.getenv("SCRAPY_PROXY_BAN_CODES", "403,429").split(",") if c.strip()]
+# После стольких банов или ошибок соединения подряд прокси уходит на паузу PROXY_COOLDOWN секунд;
+# каждая следующая пауза подряд вдвое длиннее, но не больше PROXY_COOLDOWN_MAX
+PROXY_BAN_THRESHOLD = int(os.getenv("SCRAPY_PROXY_BAN_THRESHOLD", "2"))
+PROXY_COOLDOWN = float(os.getenv("SCRAPY_PROXY_COOLDOWN", "600"))
+PROXY_COOLDOWN_MAX = float(os.getenv("SCRAPY_PROXY_COOLDOWN_MAX", "3600"))
+# Сколько раз повторить запрос через другие прокси после бана или ошибки соединения
+PROXY_MAX_RETRIES = int(os.getenv("SCRAPY_PROXY_MAX_RETRIES", "3"))
+# Свой User-Agent у каждого прокси (из USER_AGENTS)
+PROXY_USER_AGENT_PER_PROXY = os.getenv("SCRAPY_PROXY_USER_AGENT_PER_PROXY", "true").lower() == "true"
 
 # Сырые ответы площадки (gzip) для переразбора и отладки; пусто — не сохранять
 RAW_RESPONSES_DIR = os.getenv("SCRAPY_RAW_RESPONSES_DIR", "")
@@ -129,6 +163,9 @@ KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka_broker:909
 # Топики по контракту libs/eadh_common/messages.py
 KAFKA_TOPIC_OBSERVATIONS = os.getenv("KAFKA_TOPIC_OBSERVATIONS", "listing_observations")
 KAFKA_TOPIC_CRAWL_EVENTS = os.getenv("KAFKA_TOPIC_CRAWL_EVENTS", "crawl_events")
+
+# Проверка паука без Kafka: путь к JSONL-файлу, куда пишутся сообщения вместо Kafka (пусто — Kafka)
+OUTPUT_FILE = os.getenv("SCRAPY_OUTPUT_FILE", "")
 
 # Дополнительные параметры KafkaProducer
 KAFKA_PRODUCER_CONFIG = {

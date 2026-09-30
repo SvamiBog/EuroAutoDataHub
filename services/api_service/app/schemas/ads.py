@@ -5,6 +5,8 @@ from typing import List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.anomalies import AnomalyResponse, DuplicateResponse, PriceEstimateResponse
+
 
 class ListingResponse(BaseModel):
     """Объявление (текущее состояние)"""
@@ -38,6 +40,8 @@ class ListingResponse(BaseModel):
     last_seen_at: datetime
     status: str
     delisted_at: Optional[datetime] = None
+    # нарушенные правила качества данных; такие объявления не входят в аналитику
+    quality_flags: Optional[List[str]] = None
 
 
 class ListingListResponse(BaseModel):
@@ -83,6 +87,10 @@ class ListingEventResponse(BaseModel):
 
 
 class ListingDetailResponse(ListingResponse):
-    """Объявление с журналом изменений"""
+    """Объявление с журналом изменений, справедливой ценой и аномалиями"""
     days_on_market: Optional[int] = None
     events: List[ListingEventResponse] = []
+    price_estimate: Optional[PriceEstimateResponse] = None
+    anomalies: List[AnomalyResponse] = []
+    # тот же автомобиль в других объявлениях; в аналитике учитывается только каноничное
+    duplicates: List[DuplicateResponse] = []

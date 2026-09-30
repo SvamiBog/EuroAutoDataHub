@@ -5,6 +5,9 @@
 - CrawlEventItem (shard_finished) -> KAFKA_TOPIC_CRAWL_EVENTS, ключ run_id;
 - run_started отправляется при открытии паука, run_finished — по сигналу spider_closed
   (там известна причина завершения).
+
+Режим проверки паука без Kafka: OUTPUT_FILE=путь.jsonl — сообщения пишутся в файл строками
+{"topic", "key", "value"} (make probe SPIDER=autoscout24 MAKES=bmw).
 """
 import json
 import logging
@@ -20,15 +23,45 @@ from .items import CrawlEventItem, ListingObservationItem
 SCHEMA_VERSION = 1
 
 
+class _SentFuture:
+    """Результат отправки в файл: колбэки вызываются сразу (интерфейс как у kafka-python)."""
+
+    def add_callback(self, callback, *args):
+        callback(*args)
+        return self
+
+    def add_errback(self, errback, *args):
+        return self
+
+
+class FileProducer:
+    """Вместо KafkaProducer: сообщения в JSONL-файл, для проверки паука без Kafka."""
+
+    def __init__(self, path: str):
+        self.file = open(path, "a", encoding="utf-8")
+
+    def send(self, topic, key=None, value=None):
+        self.file.write(json.dumps({"topic": topic, "key": key.decode("utf-8") if key else None, "value": value},
+                                   ensure_ascii=False, default=str) + "\n")
+        return _SentFuture()
+
+    def flush(self):
+        self.file.flush()
+
+    def close(self):
+        self.file.close()
+
+
 class KafkaPipeline:
     def __init__(self, kafka_bootstrap_servers, kafka_topic_observations, kafka_topic_crawl_events,
-                 kafka_producer_config=None, stats=None):
+                 kafka_producer_config=None, stats=None, output_file=None):
         self.kafka_bootstrap_servers = kafka_bootstrap_servers
         self.kafka_topic_observations = kafka_topic_observations
         self.kafka_topic_crawl_events = kafka_topic_crawl_events
         self.producer = None
         self.kafka_producer_config = kafka_producer_config if kafka_producer_config else {}
         self.stats = stats
+        self.output_file = output_file
         self.logger = logging.getLogger(self.__class__.__name__)
 
     @classmethod
@@ -48,11 +81,15 @@ class KafkaPipeline:
             kafka_topic_crawl_events=kafka_topic_crawl_events,
             kafka_producer_config=crawler.settings.getdict('KAFKA_PRODUCER_CONFIG', {}),
             stats=crawler.stats,
+            output_file=crawler.settings.get('OUTPUT_FILE') or None,
         )
         crawler.signals.connect(pipeline.spider_closed, signal=signals.spider_closed)
         return pipeline
 
     def _create_producer(self):
+        if self.output_file:
+            self.logger.warning(f"OUTPUT_FILE: сообщения пишутся в {self.output_file}, а не в Kafka")
+            return FileProducer(self.output_file)
         return KafkaProducer(
             bootstrap_servers=self.kafka_bootstrap_servers,
             value_serializer=lambda v: json.dumps(v, default=str).encode('utf-8'),
@@ -66,7 +103,8 @@ class KafkaPipeline:
             # Без Kafka обход бессмыслен: все собранные данные были бы потеряны
             self.logger.critical(f"Не удалось подключиться к Kafka {self.kafka_bootstrap_servers}: {e}")
             raise
-        self.logger.info(f"KafkaProducer подключен к {self.kafka_bootstrap_servers}")
+        if not self.output_file:
+            self.logger.info(f"KafkaProducer подключен к {self.kafka_bootstrap_servers}")
 
         self._send_crawl_event(spider, {
             'event': 'run_started',

@@ -155,3 +155,77 @@ def test_listing_seen_in_newer_run_is_not_penalized(run, session_factory, fx):
             await session.commit()
     run(finish_r2())
     assert w.statuses()["2"] == ("active", 0)
+
+
+# --- Шарды со страной и ценой (AutoScout24) ---
+
+def price_world(run, session_factory, fx, listings):
+    """Объявления: id -> (страна, цена). Первый обход видит все; возвращает функцию «обход без части объявлений»."""
+    from conftest import run_finished
+    normalizer = Normalizer()
+
+    def crawl(run_id, day, seen, shards, reason="finished", finish=True, apply_at=None):
+        started = T0 + day * DAY
+
+        async def go():
+            async with session_factory() as session:
+                await ingest_observations(session, [
+                    obs(listing_id=i, run_id=run_id, at=started + timedelta(minutes=5), make="bmw",
+                        price=str(listings[i][1]), country_code=listings[i][0]) for i in seen], normalizer, fx)
+                for filters, complete in shards:
+                    scope = [i for i in seen if listings[i][0] == filters.get("country")
+                             and filters.get("price_from", 0) <= listings[i][1] <= filters.get("price_to", 10**9)]
+                    await apply_crawl_event(session, shard_finished(
+                        run_id=run_id, make="bmw", started=started, complete=complete, collected=len(scope),
+                        **filters))
+                if finish:
+                    await apply_crawl_event(session, run_finished(run_id=run_id, at=started + timedelta(minutes=40),
+                                                                  reason=reason))
+                await session.commit()
+            normalizer.commit()
+            async with session_factory() as session:
+                outcomes = await apply_pending_shards(session, CONFIG, now=apply_at or started + timedelta(hours=1))
+                await session.commit()
+            return {o.shard_key: o.status for o in outcomes}
+        return run(go())
+    return crawl
+
+
+LISTINGS = {"cheap": ("DE", 7000), "dear": ("DE", 12000), "it": ("IT", 7000)}
+LOW = {"country": "DE", "price_from": 5000, "price_to": 9999}
+HIGH = {"country": "DE", "price_from": 10000, "price_to": 19999}
+ITALY = {"country": "IT", "price_from": 5000, "price_to": 9999}
+
+
+def test_price_and_country_scope(run, session_factory, fx):
+    crawl = price_world(run, session_factory, fx, LISTINGS)
+    w = World(run, session_factory, fx)
+    crawl("r1", 0, ["cheap", "dear", "it"], [(LOW, True), (HIGH, True), (ITALY, True)])
+    # «cheap» пропал; шард с Италией и дорогой шард его не касаются
+    crawl("r2", 1, ["dear", "it"], [(LOW, True), (HIGH, True), (ITALY, True)])
+    assert w.statuses() == {"cheap": ("active", 1), "dear": ("active", 0), "it": ("active", 0)}
+    crawl("r3", 2, ["dear", "it"], [(LOW, True), (HIGH, True), (ITALY, True)])
+    assert w.statuses()["cheap"] == ("delisted", 2)
+
+
+def test_price_shard_waits_for_run_and_checks_siblings(run, session_factory, fx):
+    crawl = price_world(run, session_factory, fx, LISTINGS)
+    w = World(run, session_factory, fx)
+    crawl("r1", 0, ["cheap", "dear", "it"], [(LOW, True), (HIGH, True), (ITALY, True)])
+    # запуск ещё идёт — ценовые шарды ждут
+    assert crawl("r2", 1, ["dear", "it"], [(LOW, True)], finish=False) == {}
+    assert w.statuses()["cheap"] == ("active", 0)
+    # соседний дорогой шард той же страны и марки неполный: «cheap» мог подорожать и уйти туда
+    outcomes = crawl("r3", 2, ["it"], [(LOW, True), (HIGH, False), (ITALY, True)])
+    assert outcomes["country=DE;make=bmw;price_from=5000;price_to=9999"] == "incomplete"
+    assert outcomes["country=IT;make=bmw;price_from=5000;price_to=9999"] == "applied"
+    assert w.statuses() == {"cheap": ("active", 0), "dear": ("active", 0), "it": ("active", 0)}
+
+
+def test_price_shards_of_aborted_run_are_skipped(run, session_factory, fx):
+    crawl = price_world(run, session_factory, fx, LISTINGS)
+    w = World(run, session_factory, fx)
+    crawl("r1", 0, ["cheap", "dear", "it"], [(LOW, True), (HIGH, True), (ITALY, True)])
+    outcomes = crawl("r2", 1, ["dear"], [(LOW, True), (HIGH, True)], reason="shard_failures")
+    assert set(outcomes.values()) == {"incomplete"}
+    assert w.statuses()["cheap"] == ("active", 0)

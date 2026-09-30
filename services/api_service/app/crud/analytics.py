@@ -3,6 +3,8 @@
 
 Цены — в EUR. В трендах и амортизации каждое объявление учитывается один раз за период
 (по последнему наблюдению периода), чтобы долго висящие объявления не перевешивали.
+Объявления с нарушениями качества данных (listing.quality_flags) и дубли (тот же автомобиль на другой
+площадке, listing_duplicate) не учитываются.
 """
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
@@ -13,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from eadh_common.models import (
-    DailyObservation, Listing, ListingEvent, SegmentDailyStats, VehicleMake, VehicleModel,
+    DailyObservation, Listing, ListingDuplicate, ListingEvent, SegmentDailyStats, VehicleMake, VehicleModel,
 )
 from eadh_common.normalize import slugify
 
@@ -31,9 +33,12 @@ class ListingFilter:
     year_to: Optional[int] = None
     fuel_type: Optional[str] = None
     gearbox: Optional[str] = None
+    # только объявления без нарушений качества данных (неправдоподобные цены, годы, пробег)
+    quality_ok: bool = True
 
     def conditions(self) -> list:
-        conditions = []
+        conditions = [Listing.quality_flags.is_(None)] if self.quality_ok else []
+        conditions.append(~exists().where(ListingDuplicate.listing_id == Listing.id))
         if self.make:
             conditions.append(Listing.make_id.in_(select(VehicleMake.id).where(VehicleMake.slug == slugify(self.make))))
         if self.model:

@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from eadh_common.models import Listing
 
 from app.core.config import settings
+from app.crud import anomalies as anomalies_crud
 from app.crud.ads import (
     SORTABLE_FIELDS,
     get_listing,
@@ -29,6 +30,7 @@ from app.schemas.ads import (
     ListingListResponse,
     ListingResponse,
 )
+from app.schemas.anomalies import AnomalyResponse, DuplicateResponse, PriceEstimateResponse
 
 router = APIRouter()
 
@@ -96,6 +98,12 @@ async def _detail(session: AsyncSession, listing: Optional[Listing]) -> ListingD
     end = listing.delisted_at or datetime.now(timezone.utc)
     detail.days_on_market = max((end - listing.first_seen_at).days, 0)
     detail.events = [ListingEventResponse.model_validate(event) for event in events]
+    estimate = await anomalies_crud.get_price_estimate(session, listing.id)
+    if estimate is not None:
+        detail.price_estimate = PriceEstimateResponse.model_validate(estimate)
+    detail.anomalies = [AnomalyResponse.model_validate(a) for a in await anomalies_crud.listing_anomalies(session, listing.id)]
+    detail.duplicates = [DuplicateResponse.model_validate(d)
+                         for d in await anomalies_crud.listing_duplicates(session, listing.id)]
     return detail
 
 

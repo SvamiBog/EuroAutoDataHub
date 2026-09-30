@@ -20,8 +20,15 @@ VARIABLES = {
 
 LATEST_STATS = "(SELECT max(stat_date) FROM segment_daily_stats)"
 
-# Фильтры по характеристикам объявления l (listing) с каноничными марками vm и моделями vmo
+# Год выпуска без разделителя разрядов («2021», а не «2,021»)
+YEAR_COLUMN = {"column_settings": {'["name","Год"]': {"number_separators": "."}}}
+
+# Фильтры по характеристикам объявления l (listing) с каноничными марками vm и моделями vmo.
+# Объявления с нарушениями качества данных (неправдоподобные цены, годы, пробег) и дубли (тот же автомобиль
+# на другой площадке) не учитываются
 LISTING_FILTERS = """
+      AND l.quality_flags IS NULL
+      AND NOT EXISTS (SELECT 1 FROM listing_duplicate d WHERE d.listing_id = l.id)
       [[AND vm.slug = {{make}}]]
       [[AND vmo.slug = {{model}}]]
       [[AND l.country_code = {{country}}]]
@@ -205,7 +212,10 @@ ORDER BY 2 DESC""",
         "sql": """
 SELECT source AS "Площадка", source_listing_id AS "ID", title AS "Заголовок", make_name AS "Марка",
        model_name AS "Модель", year AS "Год", mileage_km AS "Пробег", price AS "Цена", currency AS "Валюта",
-       price_eur AS "Цена, EUR", status AS "Статус", first_seen_at AS "Впервые", last_seen_at AS "Последний раз",
+       price_eur AS "Цена, EUR", expected_price_eur AS "Справедливая цена, EUR",
+       round((price_deviation * 100)::numeric, 1) AS "Отклонение, %", quality_flags AS "Нарушения качества",
+       duplicate_of AS "Дубль объявления",
+       status AS "Статус", first_seen_at AS "Впервые", last_seen_at AS "Последний раз",
        delisted_at AS "Снято", days_on_market AS "Дней на рынке", url AS "Ссылка"
 FROM v_listing
 WHERE 1 = 1
@@ -213,6 +223,7 @@ WHERE 1 = 1
   [[AND source_listing_id = {{listing}}]]
 ORDER BY last_seen_at DESC
 LIMIT 50""",
+        "viz": YEAR_COLUMN,
     },
     "listing_price_history": {
         "name": "Объявление: цена по дням, EUR",
@@ -270,6 +281,103 @@ ORDER BY started_at""",
         "viz": {"graph.dimensions": ["started_at", "source"], "graph.metrics": ["completeness"],
                 "graph.x_axis.title_text": "Запуск", "graph.y_axis.title_text": "Полнота"},
     },
+
+    # --- Аномалии ---
+    "anomaly_daily": {
+        "name": "Аномалии: новые по дням",
+        "display": "bar",
+        "sql": """
+SELECT a.detected_on, a.kind, count(*) AS anomalies
+FROM anomaly a
+WHERE 1 = 1
+  [[AND a.detected_on >= {{date_from}}]]
+  [[AND a.detected_on <= {{date_to}}]]
+  [[AND a.country_code = {{country}}]]
+GROUP BY a.detected_on, a.kind
+ORDER BY a.detected_on, a.kind""",
+        "viz": {"graph.dimensions": ["detected_on", "kind"], "graph.metrics": ["anomalies"],
+                "stackable.stack_type": "stacked",
+                "graph.x_axis.title_text": "Дата", "graph.y_axis.title_text": "Аномалий"},
+    },
+    "anomaly_health": {
+        "name": "Аномалии: здоровье сбора и качество данных",
+        "display": "table",
+        "sql": """
+SELECT a.detected_on AS "Дата", a.severity AS "Важность", a.source AS "Площадка", a.rule AS "Правило",
+       a.message AS "Описание", a.status AS "Статус", a.run_id AS "Запуск"
+FROM anomaly a
+WHERE a.kind IN ('crawl_health', 'data_quality') AND a.entity_type IN ('run', 'source')
+  [[AND a.detected_on >= {{date_from}}]]
+  [[AND a.detected_on <= {{date_to}}]]
+ORDER BY a.detected_on DESC, CASE a.severity WHEN 'critical' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END
+LIMIT 100""",
+    },
+    "anomaly_below_market": {
+        "name": "Аномалии: объявления дешевле справедливой цены",
+        "display": "table",
+        # скидка больше 60 % — неправдоподобная цена (заглушка, аренда, битая машина), не показывается
+        "sql": f"""
+SELECT vm.name AS "Марка", vmo.name AS "Модель", l.year AS "Год", l.mileage_km AS "Пробег",
+       l.country_code AS "Страна", l.price_eur AS "Цена, EUR", e.expected_price_eur AS "Справедливая цена, EUR",
+       round((e.deviation * 100)::numeric, 1) AS "Отклонение, %", e.segment_size AS "Объявлений в сегменте",
+       l.first_seen_at AS "Впервые", l.url AS "Ссылка"
+FROM listing_price_estimate e
+JOIN listing l ON l.id = e.listing_id
+LEFT JOIN vehicle_make vm ON vm.id = l.make_id
+LEFT JOIN vehicle_model vmo ON vmo.id = l.model_id
+WHERE l.status = 'active' AND e.deviation <= -0.15 AND e.deviation > -0.6{LISTING_FILTERS}
+ORDER BY e.deviation
+LIMIT 200""",
+        "viz": YEAR_COLUMN,
+    },
+    "anomaly_market": {
+        "name": "Аномалии: сдвиги цены и предложения сегментов",
+        "display": "table",
+        "sql": """
+SELECT a.detected_on AS "Дата", a.rule AS "Правило", a.message AS "Описание", a.score AS "Отклонение, MAD"
+FROM v_anomaly a
+WHERE a.kind = 'market'
+  [[AND a.make_slug = {{make}}]]
+  [[AND a.model_slug = {{model}}]]
+  [[AND a.country_code = {{country}}]]
+  [[AND a.detected_on >= {{date_from}}]]
+  [[AND a.detected_on <= {{date_to}}]]
+ORDER BY a.detected_on DESC, abs(a.score) DESC
+LIMIT 100""",
+    },
+    "anomaly_behavior": {
+        "name": "Аномалии: перевыставления, частые смены цены, пробег",
+        "display": "table",
+        "sql": """
+SELECT a.detected_on AS "Дата", a.rule AS "Правило", a.message AS "Описание", a.listing_url AS "Ссылка",
+       a.status AS "Статус"
+FROM v_anomaly a
+WHERE a.kind = 'behavior'
+  [[AND a.make_slug = {{make}}]]
+  [[AND a.model_slug = {{model}}]]
+  [[AND a.country_code = {{country}}]]
+  [[AND a.detected_on >= {{date_from}}]]
+  [[AND a.detected_on <= {{date_to}}]]
+ORDER BY a.detected_on DESC
+LIMIT 100""",
+    },
+    "anomaly_precision": {
+        "name": "Аномалии: разметка и precision по правилам",
+        "display": "table",
+        "sql": """
+SELECT kind AS "Класс", rule AS "Правило", count(*) AS "Всего",
+       count(*) FILTER (WHERE status = 'new') AS "Новых",
+       count(*) FILTER (WHERE status = 'confirmed') AS "Подтверждено",
+       count(*) FILTER (WHERE status = 'false_positive') AS "Ложных",
+       round(count(*) FILTER (WHERE status = 'confirmed')::numeric
+             / NULLIF(count(*) FILTER (WHERE status IN ('confirmed', 'false_positive')), 0), 3) AS "Precision"
+FROM anomaly
+WHERE 1 = 1
+  [[AND detected_on >= {{date_from}}]]
+  [[AND detected_on <= {{date_to}}]]
+GROUP BY kind, rule
+ORDER BY kind, count(*) DESC""",
+    },
 }
 
 # Дашборды: фильтры и карточки (ключ карточки, ширина, высота); сетка Metabase — 24 колонки
@@ -301,5 +409,13 @@ DASHBOARDS = [
         "description": "Запуски обхода: полнота, неполные шарды, снятия, предупреждения.",
         "parameters": ["source", "date_from"],
         "cards": [("health_runs", 24, 8), ("health_completeness", 24, 6)],
+    },
+    {
+        "name": "Аномалии",
+        "description": "Проблемы сбора и качества данных, объявления дешевле справедливой цены, сдвиги рынка, "
+                       "перевыставления и уменьшение пробега; precision по ручной разметке.",
+        "parameters": ["make", "model", "country", "year_from", "year_to", "date_from", "date_to"],
+        "cards": [("anomaly_daily", 12, 6), ("anomaly_precision", 12, 6), ("anomaly_health", 24, 6),
+                  ("anomaly_below_market", 24, 8), ("anomaly_market", 12, 7), ("anomaly_behavior", 12, 7)],
     },
 ]

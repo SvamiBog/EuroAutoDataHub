@@ -134,3 +134,18 @@ def test_segment_timeseries(pg_client):
 def test_invalid_date_range(pg_client):
     response = pg_client.get("/api/v1/analytics/price-trend", params={"date_from": "2026-09-10", "date_to": "2026-09-01"})
     assert response.status_code == 422
+
+
+def test_flagged_listings_are_excluded_from_trends(pg_client):
+    seed(pg_client.factory)
+
+    async def flag_t1():
+        async with pg_client.factory() as session:
+            await session.execute(text(
+                "UPDATE listing SET quality_flags = '[\"price_too_low\"]' WHERE source_listing_id = 't1'"))
+            await session.commit()
+    asyncio.run(flag_t1())
+    rows = by(pg_client.get("/api/v1/analytics/price-trend", params={
+        "make": "toyota", "country": "PL", "date_from": "2026-08-31", "date_to": "2026-09-06"}).json()["data"],
+        "period_start", "country_code")
+    assert (rows[("2026-08-31", "PL")]["listings"], rows[("2026-08-31", "PL")]["median"]) == (2, 13000)

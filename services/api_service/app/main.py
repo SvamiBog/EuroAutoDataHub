@@ -9,7 +9,7 @@ import uvicorn
 from app.core.config import settings
 from app.core.security import get_cors_origins, require_api_key
 from app.core.middleware import LoggingMiddleware, ErrorHandlingMiddleware
-from app.routers import ads, analytics, stats, health
+from app.routers import ads, analytics, anomalies, health, stats, subscriptions
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -57,6 +57,9 @@ app.include_router(health.router, prefix="/health", tags=["Health"])
 app.include_router(ads.router, prefix="/api/v1/ads", tags=["Ads"], dependencies=protected)
 app.include_router(stats.router, prefix="/api/v1/stats", tags=["Statistics"], dependencies=protected)
 app.include_router(analytics.router, prefix="/api/v1/analytics", tags=["Analytics"], dependencies=protected)
+app.include_router(anomalies.router, prefix="/api/v1/anomalies", tags=["Anomalies"], dependencies=protected)
+app.include_router(subscriptions.router, prefix="/api/v1/subscriptions", tags=["Subscriptions"],
+                   dependencies=protected)
 
 @app.get("/")
 async def root():
@@ -70,6 +73,8 @@ async def root():
             "ads": "/api/v1/ads",
             "statistics": "/api/v1/stats",
             "analytics": "/api/v1/analytics",
+            "anomalies": "/api/v1/anomalies",
+            "subscriptions": "/api/v1/subscriptions",
             "health": "/health"
         }
     }

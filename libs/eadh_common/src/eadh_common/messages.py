@@ -18,12 +18,16 @@ TOPIC_LISTING_OBSERVATIONS = "listing_observations"
 TOPIC_CRAWL_EVENTS = "crawl_events"
 TOPIC_DLQ = "ingest_dlq"
 
-# Ключи фильтров шарда, по которым lifecycle выбирает покрываемые объявления
-SHARD_FILTER_KEYS = ("make", "model", "year_from", "year_to")
+# Ключи фильтров шарда, по которым lifecycle выбирает покрываемые объявления:
+# country — страна объявления (площадки с несколькими странами), make/model — значения площадки,
+# year_from/year_to — год выпуска, price_from/price_to — цена в валюте площадки (границы включительно)
+SHARD_FILTER_KEYS = ("country", "make", "model", "year_from", "year_to", "price_from", "price_to")
+# Фильтры по атрибутам, которые меняются у объявления (цена): объявление может перейти в соседний шард
+VOLATILE_SHARD_FILTERS = ("price_from", "price_to")
 
 
 def shard_key_for(filters: dict[str, Any]) -> str:
-    """Каноничная строка шарда: 'make=audi;year_from=2010;year_to=2015'."""
+    """Каноничная строка шарда: 'make=audi;year_from=2010;year_to=2015' или 'country=DE;make=bmw;...'."""
     unknown = set(filters) - set(SHARD_FILTER_KEYS)
     if unknown:
         raise ValueError(f"Неизвестные фильтры шарда: {sorted(unknown)}")

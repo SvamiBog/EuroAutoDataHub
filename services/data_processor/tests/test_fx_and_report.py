@@ -88,7 +88,9 @@ def test_report_is_built_after_lifecycle(run, session_factory, fx):
     assert report["events"] == {"new": 2}
     assert report["shards_by_lifecycle"] == {"applied": 1}
     # запланировано 2 шарда, пришёл 1
-    assert report["warnings"] == ["обработано шардов 1 из 2"]
+    [warning] = report["warnings"]
+    assert warning.startswith("обработано шардов 1 из 2")
+    assert report["anomalies"][0]["rule"] == "incomplete_shards"
     assert crawl_run.report_sent_at is not None and crawl_run.report["run_id"] == "run-1"
     text = format_report(report)
     assert "Собрано: 2 из 2 (100.0%)" in text and "Новых: 2" in text

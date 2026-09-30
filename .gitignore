@@ -123,3 +123,6 @@ secrets.yml
 
 # Project structure file (local only)
 project_layout.txt
+
+# make probe: сообщения пробного обхода
+probe_*.jsonl
