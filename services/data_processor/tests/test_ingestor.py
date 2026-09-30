@@ -196,3 +196,26 @@ def test_transient_error_resets_pool_before_retry(run, session_factory, fx, monk
     monkeypatch.setattr(ingestor, "write", flaky_write)
     run(ingestor.handle_records([obs_record("1")]))
     assert resets == [1] and count_listings(run, session_factory) == 1
+
+
+def test_anomaly_detection_is_retried_after_db_outage(run, session_factory, fx, monkeypatch, telegram):
+    import app.ingestor as ingestor_module
+    from datetime import date
+
+    calls = []
+
+    async def flaky_detect(session_factory_, config, day, now, snapshot, notifier):
+        calls.append((day, snapshot))
+        if len(calls) == 1:
+            raise ConnectionRefusedError("db down")
+        return {}
+
+    ingestor = Ingestor(CONFIG, session_factory, Dlq(), fx=fx, notifier=telegram.notifier)
+    monkeypatch.setattr(ingestor_module, "detect_day", flaky_detect)
+    ingestor.pending_days = {date(2026, 9, 1), date(2026, 9, 2)}
+    run(ingestor.run_maintenance())  # ошибка БД: дни остаются в очереди
+    assert ingestor.pending_days == {date(2026, 9, 1), date(2026, 9, 2)}
+    run(ingestor.run_maintenance())
+    assert ingestor.pending_days == set()
+    # снимок (справедливые цены, дайджест) — только для последнего дня
+    assert calls[1:] == [(date(2026, 9, 1), False), (date(2026, 9, 2), True)]

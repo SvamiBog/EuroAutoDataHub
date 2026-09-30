@@ -71,9 +71,44 @@ def shard_finished(run_id="run-1", make="audi", started=T0, finished=None, colle
                          pages_total=1, pages_failed=0 if complete else 1, complete=complete)
 
 
-def run_finished(run_id="run-1", at=T0 + timedelta(hours=1), reason="finished"):
+def run_finished(run_id="run-1", at=T0 + timedelta(hours=1), reason="finished", **stats):
     return RunFinished(run_id=run_id, source="otomoto.pl", finished_at=at, finish_reason=reason,
-                       stats={"otomoto/forbidden_403": 0})
+                       stats={"forbidden_403": 0, **stats})
+
+
+class FakeTelegram:
+    """Notifier с подменённой отправкой: сообщения складываются в messages."""
+
+    def __init__(self):
+        from app.notify import Notifier
+        self.messages: list[tuple[str, str]] = []
+
+        async def sender(token, chat_id, text):
+            self.messages.append((chat_id, text))
+
+        self.notifier = Notifier("token", "chat", sender=sender)
+
+    @property
+    def texts(self) -> list[str]:
+        return [text for _, text in self.messages]
+
+
+@pytest.fixture
+def telegram():
+    return FakeTelegram()
+
+
+def make_listing(listing_id=None, **fields):
+    """Объявление для тестов детекторов (без приёма наблюдений)."""
+    from eadh_common.models import Listing
+    values = {"source": "otomoto.pl", "source_listing_id": str(listing_id or fields.get("source_listing_id", "x")),
+              "country_code": "PL", "first_seen_at": T0, "last_seen_at": T0, "status": "active",
+              "price": Decimal("10000"), "currency": "EUR", "price_eur": Decimal("10000"),
+              "year": 2019, "mileage_km": 50000, "make_raw": "toyota", "model_raw": "corolla"}
+    values.update(fields)
+    if listing_id is not None:
+        values["id"] = listing_id
+    return Listing(**values)
 
 
 # --- Тесты на настоящем PostgreSQL (маркер pg, нужен TEST_DATABASE_URL) ---

@@ -3,24 +3,25 @@
 
 Отчёт строится, когда запуск завершён и все его полные шарды прошли lifecycle
 (или истёк REPORT_WAIT_TIMEOUT_H) — так в нём есть число снятых объявлений.
+Вместе с отчётом проверяются правила здоровья сбора (app.anomalies.health): найденные проблемы
+пишутся в таблицу anomaly и попадают в то же сообщение.
 """
 import logging
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
-import httpx
-from sqlalchemy import func
+from sqlalchemy import func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
-from eadh_common.models import CrawlRun, CrawlShard, Listing, ListingEvent, ShardLifecycleStatus
+from eadh_common.models import Anomaly, CrawlRun, CrawlShard, Listing, ListingEvent, ShardLifecycleStatus
+
+from app.anomalies.health import comparable_history, fill_rates, run_findings
+from app.anomalies.store import SEVERITY_ICONS, save_findings
+from app.notify import Notifier
 
 logger = logging.getLogger(__name__)
-
-# Предупреждение, если собрано меньше этой доли от ожидаемого
-MIN_COMPLETENESS = 0.95
-# Предупреждение, если собрано на столько меньше, чем в предыдущем запуске той же площадки
-MAX_VOLUME_DROP = 0.3
 
 
 async def build_report(session: AsyncSession, run: CrawlRun) -> dict[str, Any]:
@@ -37,32 +38,13 @@ async def build_report(session: AsyncSession, run: CrawlRun) -> dict[str, Any]:
     )).tuples().all())
     observed = (await session.execute(
         select(func.count()).select_from(Listing).where(Listing.last_seen_run_id == run.id))).scalar_one()
-
-    previous = (await session.execute(
-        select(CrawlRun).where(CrawlRun.source == run.source, CrawlRun.id != run.id,
-                               CrawlRun.report.is_not(None), CrawlRun.started_at < run.started_at)
-        .order_by(CrawlRun.started_at.desc()).limit(1)
-    )).scalar_one_or_none()
-    previous_collected = (previous.report or {}).get("collected") if previous else None
-
-    warnings = []
-    if run.finish_reason and run.finish_reason != "finished":
-        warnings.append(f"обход завершён досрочно: {run.finish_reason}")
-    if run.shards_planned and len(shards) < run.shards_planned:
-        warnings.append(f"обработано шардов {len(shards)} из {run.shards_planned}")
-    incomplete = [s.shard_key for s in shards if not s.complete]
-    if incomplete:
-        names = ", ".join(incomplete[:5]) + (" …" if len(incomplete) > 5 else "")
-        warnings.append(f"неполных шардов: {len(incomplete)} ({names})")
-    if expected and collected / expected < MIN_COMPLETENESS:
-        warnings.append(f"полнота {collected / expected:.1%} ниже {MIN_COMPLETENESS:.0%}")
-    for status in (ShardLifecycleStatus.SUSPICIOUS.value, ShardLifecycleStatus.TIMEOUT.value):
-        if by_lifecycle.get(status):
-            warnings.append(f"шардов со статусом {status}: {by_lifecycle[status]}")
-    if previous_collected and collected < previous_collected * (1 - MAX_VOLUME_DROP):
-        warnings.append(f"собрано {collected} против {previous_collected} в прошлом запуске")
+    flags = (await session.execute(
+        select(Listing.quality_flags).where(Listing.last_seen_run_id == run.id, Listing.quality_flags.is_not(None))
+    )).scalars().all()
+    by_flag = Counter(flag for listing_flags in flags for flag in listing_flags)
 
     duration = (run.finished_at - run.started_at).total_seconds() if run.finished_at else None
+    stats = run.stats or {}
     return {
         "run_id": run.id,
         "source": run.source,
@@ -74,15 +56,20 @@ async def build_report(session: AsyncSession, run: CrawlRun) -> dict[str, Any]:
         "shards_planned": run.shards_planned,
         "shards_complete": sum(1 for s in shards if s.complete),
         "shards_by_lifecycle": by_lifecycle,
-        "incomplete_shards": incomplete[:50],
+        "incomplete_shards": [s.shard_key for s in shards if not s.complete][:50],
+        # шард не начат: не получена первая страница (ошибка API, HTTP или блокировка)
+        "failed_shards": sum(1 for s in shards if not s.complete and s.pages_total == 0),
         "expected": expected,
         "collected": collected,
         "completeness": round(collected / expected, 4) if expected else None,
         "observed_listings": observed,
+        "flagged_listings": len(flags),
+        "quality_flags": dict(by_flag),
+        "fill_rates": fill_rates(stats),
         "events": events,
-        "spider_stats": run.stats or {},
-        "previous_collected": previous_collected,
-        "warnings": warnings,
+        "spider_stats": stats,
+        "warnings": [],
+        "anomalies": [],
     }
 
 
@@ -90,8 +77,13 @@ def format_report(report: dict[str, Any]) -> str:
     events = report["events"]
     duration = report["duration_s"]
     completeness = report["completeness"]
+    anomalies = report.get("anomalies") or []
+    if any(a["severity"] == "critical" for a in anomalies):
+        icon = "🚨"
+    else:
+        icon = "⚠️" if anomalies or report["warnings"] else "✅"
     lines = [
-        f"{'⚠️' if report['warnings'] else '✅'} Обход {report['source']} ({report['run_id'][:8]})",
+        f"{icon} Обход {report['source']} ({report['run_id'][:8]})",
         f"Длительность: {timedelta(seconds=int(duration)) if duration is not None else '—'}, "
         f"завершение: {report['finish_reason']}",
         f"Шарды: {report['shards_complete']}/{report['shards']} полных"
@@ -101,22 +93,20 @@ def format_report(report: dict[str, Any]) -> str:
         f"Новых: {events.get('new', 0)}, изменений цены: {events.get('price_change', 0)}, "
         f"снято: {events.get('delisted', 0)}, вернулось: {events.get('relisted', 0)}",
     ]
-    if report["warnings"]:
+    if anomalies:
+        lines.append("Проблемы:")
+        lines.extend(f"{SEVERITY_ICONS.get(a['severity'], '•')} {a['text']}" for a in anomalies)
+    elif report["warnings"]:
         lines.append("Предупреждения:")
         lines.extend(f"• {warning}" for warning in report["warnings"])
     return "\n".join(lines)
 
 
-async def send_telegram(token: str, chat_id: str, text: str) -> None:
-    async with httpx.AsyncClient(timeout=15) as client:
-        response = await client.post(f"https://api.telegram.org/bot{token}/sendMessage",
-                                     json={"chat_id": chat_id, "text": text})
-        response.raise_for_status()
-
-
-async def send_pending_reports(session: AsyncSession, config, now: Optional[datetime] = None) -> list[dict]:
+async def send_pending_reports(session: AsyncSession, config, now: Optional[datetime] = None,
+                               notifier: Optional[Notifier] = None) -> list[dict]:
     """Строит отчёты по завершённым запускам без отчёта. Коммит — на стороне вызывающего."""
     now = now or datetime.now(timezone.utc)
+    notifier = notifier or Notifier.from_settings(config)
     timeout = timedelta(hours=config.REPORT_WAIT_TIMEOUT_H)
     runs = (await session.execute(
         select(CrawlRun).where(CrawlRun.status == "finished", CrawlRun.report_sent_at.is_(None))
@@ -133,15 +123,22 @@ async def send_pending_reports(session: AsyncSession, config, now: Optional[date
             continue
 
         report = await build_report(session, run)
+        day = (run.finished_at or run.started_at).astimezone(timezone.utc).date()
+        findings = run_findings(report, await comparable_history(session, run, config), config, day)
+        await save_findings(session, findings, now)
+        prefix = f"{run.source}: "
+        texts = [finding.message.removeprefix(prefix) for finding in findings]
+        report["anomalies"] = [{"rule": f.rule, "severity": f.severity.value, "text": text}
+                               for f, text in zip(findings, texts)]
+        report["warnings"] = texts
+
         text = format_report(report)
         logger.info("Отчёт о прогоне:\n" + text)
-        if config.TELEGRAM_BOT_TOKEN and config.TELEGRAM_CHAT_ID:
-            try:
-                await send_telegram(config.TELEGRAM_BOT_TOKEN, config.TELEGRAM_CHAT_ID, text)
-                report["telegram"] = "sent"
-            except httpx.HTTPError as exc:
-                logger.error(f"Не удалось отправить отчёт в Telegram: {exc}")
-                report["telegram"] = f"error: {exc}"
+        report["telegram"] = await notifier.send(text)
+        if findings:
+            await session.execute(
+                update(Anomaly).where(Anomaly.key.in_([f.key for f in findings]), Anomaly.notified_at.is_(None))
+                .values(notified_at=now).execution_options(synchronize_session=False))
         run.report = report
         run.report_sent_at = now
         reports.append(report)

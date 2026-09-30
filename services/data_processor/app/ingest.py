@@ -21,6 +21,7 @@ from eadh_common.models import (
     ShardLifecycleStatus,
 )
 
+from app.anomalies.quality import QualityRules, listing_flags
 from app.fx import FxConverter
 from app.normalization import Normalizer
 
@@ -110,8 +111,12 @@ def _same_amount(a: Optional[Decimal], b: Optional[Decimal]) -> bool:
 
 
 async def ingest_observations(session: AsyncSession, observations: Iterable[ListingObservation],
-                              normalizer: Normalizer, fx: FxConverter) -> IngestStats:
-    """Создаёт и обновляет объявления, пишет события new / price_change / mileage_change / relisted."""
+                              normalizer: Normalizer, fx: FxConverter,
+                              quality: QualityRules = QualityRules()) -> IngestStats:
+    """Создаёт и обновляет объявления, пишет события new / price_change / mileage_change / relisted.
+
+    Флаги качества данных (quality_flags) пересчитываются по итоговому состоянию объявления.
+    """
     stats = IngestStats()
     batch = latest_per_listing(observations)
     if not batch:
@@ -136,6 +141,7 @@ async def ingest_observations(session: AsyncSession, observations: Iterable[List
                 status=ListingStatus.ACTIVE.value,
                 **{column: getattr(obs, attr) for attr, column in ATTRIBUTE_FIELDS.items()},
             )
+            listing.quality_flags = listing_flags(listing, quality, _obs_date(obs.observed_at))
             session.add(listing)
             new_listings.append((listing, obs))
             stats.new += 1
@@ -172,6 +178,7 @@ async def ingest_observations(session: AsyncSession, observations: Iterable[List
         if make_id is not None:
             listing.make_id, listing.model_id = make_id, model_id
         listing.price_eur = fx.to_eur(listing.price, listing.currency, obs.observed_at.date())
+        listing.quality_flags = listing_flags(listing, quality, _obs_date(obs.observed_at))
         listing.last_seen_at = obs.observed_at
         listing.last_seen_run_id = obs.run_id
         listing.missed_complete_runs = 0

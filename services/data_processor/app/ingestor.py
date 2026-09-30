@@ -24,11 +24,14 @@ from sqlalchemy.exc import DBAPIError, InterfaceError, OperationalError
 from eadh_common.messages import ListingObservation, crawl_event_adapter
 
 from app.aggregates import compute_segment_stats
+from app.anomalies.quality import QualityRules
+from app.anomalies.runner import check_sources, detect_day, refresh_quality
 from app.core.config import Settings, settings
 from app.fx import FxConverter, refresh_rates
 from app.ingest import apply_crawl_event, ingest_observations
 from app.lifecycle import LifecycleConfig, apply_pending_shards
 from app.normalization import Normalizer
+from app.notify import Notifier
 from app.report import send_pending_reports
 
 logger = logging.getLogger("ingestor")
@@ -88,7 +91,8 @@ class Ingestor:
     def __init__(self, config: Settings, session_factory, dlq_send: Callable[[str, bytes], Awaitable[None]],
                  normalizer: Optional[Normalizer] = None, fx: Optional[FxConverter] = None,
                  stop_event: Optional[asyncio.Event] = None,
-                 on_db_error: Optional[Callable[[], Awaitable[None]]] = None):
+                 on_db_error: Optional[Callable[[], Awaitable[None]]] = None,
+                 notifier: Optional[Notifier] = None):
         self.config = config
         self.session_factory = session_factory
         self.dlq_send = dlq_send
@@ -97,6 +101,11 @@ class Ingestor:
         self.normalizer = normalizer or Normalizer()
         self.fx = fx or FxConverter()
         self.stop_event = stop_event or asyncio.Event()
+        self.notifier = notifier or Notifier.from_settings(config)
+        self.quality_rules = QualityRules.from_settings(config)
+        # Дни завершённых прогонов, для которых ещё не посчитаны витрина и аномалии
+        # (при ошибке БД повторяются на следующем цикле)
+        self.pending_days: set = set()
         self.lifecycle_config = LifecycleConfig(
             delist_after_missed_runs=config.DELIST_AFTER_MISSED_RUNS,
             max_delist_ratio=config.MAX_DELIST_RATIO,
@@ -132,7 +141,7 @@ class Ingestor:
         events = [item.message for item in items if not isinstance(item.message, ListingObservation)]
         async with self.session_factory() as session:
             try:
-                stats = await ingest_observations(session, observations, self.normalizer, self.fx)
+                stats = await ingest_observations(session, observations, self.normalizer, self.fx, self.quality_rules)
                 for event in events:
                     await apply_crawl_event(session, event)
                 await session.commit()
@@ -207,7 +216,7 @@ class Ingestor:
     # --- Периодические задачи ---
 
     async def run_maintenance(self) -> None:
-        """Жизненный цикл объявлений и отчёты о прогонах. Ошибки не останавливают приём."""
+        """Жизненный цикл объявлений, отчёты о прогонах, витрина и аномалии. Ошибки не останавливают приём."""
         try:
             async with self.session_factory() as session:
                 outcomes = await apply_pending_shards(session, self.lifecycle_config)
@@ -215,22 +224,34 @@ class Ingestor:
             if outcomes:
                 logger.info(f"Lifecycle: обработано шардов {len(outcomes)}")
             async with self.session_factory() as session:
-                reports = await send_pending_reports(session, self.config)
+                reports = await send_pending_reports(session, self.config, notifier=self.notifier)
                 await session.commit()
-            # витрина за дни завершённых запусков: их данные и снятия теперь полные
-            for day in sorted(report_dates(reports)):
-                async with self.session_factory() as session:
-                    if session.bind.dialect.name != "postgresql":
-                        break
-                    rows = await compute_segment_stats(session, day)
-                    await session.commit()
-                logger.info(f"Витрина сегментов за {day}: {rows} строк")
+            await check_sources(self.session_factory, self.config, self.notifier, datetime.now(timezone.utc))
+            # витрина и аномалии за дни завершённых запусков: их данные и снятия теперь полные
+            self.pending_days |= report_dates(reports)
+            await self.process_pending_days()
         except Exception as exc:
             if is_transient(exc):
                 logger.warning(f"Периодические задачи отложены: БД недоступна ({type(exc).__name__}: {exc})")
                 await self.reset_db_connections()
             else:
                 logger.exception(f"Ошибка периодических задач: {exc}")
+
+    async def process_pending_days(self) -> None:
+        if not self.pending_days:
+            return
+        latest = max(self.pending_days)
+        await refresh_quality(self.session_factory, self.config, latest)
+        now = datetime.now(timezone.utc)
+        for day in sorted(self.pending_days):
+            async with self.session_factory() as session:
+                if session.bind.dialect.name == "postgresql":
+                    rows = await compute_segment_stats(session, day)
+                    await session.commit()
+                    logger.info(f"Витрина сегментов за {day}: {rows} строк")
+            await detect_day(self.session_factory, self.config, day, now, snapshot=day == latest,
+                             notifier=self.notifier)
+            self.pending_days.discard(day)
 
     async def refresh_fx(self) -> None:
         try:

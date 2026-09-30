@@ -162,3 +162,20 @@ def test_partition_is_created_for_new_month(run, pg_session_factory, fx):
                 "WHERE inhparent = 'listing_observation'::regclass"))).scalars().all()
     assert "listing_observation_2031_01" in run(partitions())
     assert daily_rows(run, pg_session_factory)[0][0] == far
+
+
+@pytest.mark.pg
+def test_flagged_listings_count_in_supply_but_not_in_prices(run, pg_session_factory, fx):
+    seed_market(run, pg_session_factory, fx)
+    # цена «1 PLN» — заглушка: объявление активно, но в медиану не входит
+    ingest_all(run, pg_session_factory, fx, [[obs("z1", at=at(D), price="1", year=2019)]])
+
+    async def compute():
+        async with pg_session_factory() as session:
+            await compute_segment_stats(session, D)
+            await session.commit()
+    run(compute())
+    stats, _, _ = stats_by_key(run, pg_session_factory)
+    country = stats[segment_key("country", "PL")]
+    assert (country.active_count, country.new_count, country.observed_count) == (4, 2, 3)
+    assert country.price_eur_median == Decimal("12000.00")
