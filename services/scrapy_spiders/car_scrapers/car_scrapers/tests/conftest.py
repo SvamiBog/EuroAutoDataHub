@@ -46,7 +46,7 @@ def mock_spider():
     spider.name = 'otomoto'
     spider.allowed_domains = ['otomoto.pl']
     spider.make_list = ['audi', 'bmw', 'mercedes-benz']
-    spider.current_make_index = 0
+    spider.shards_done = 0
     spider.max_consecutive_403 = 3
     spider.pause_duration = 300
     spider.scraped_ids = set()

@@ -8,25 +8,57 @@ from rich.table import Table
 
 import json
 import math
+import random
 import sys
 import time
+import uuid
 import scrapy
 import urllib.parse as up
-from collections import OrderedDict
+from collections import OrderedDict, deque
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from ..items import ParsedAdItem, ActiveIdsItem
+from ..items import ListingObservationItem, CrawlEventItem
 from ..utils.make_loader import MakeLoader, parse_makes_arg
+from ..utils.raw_store import RawResponseStore
 from typing import Optional, AsyncGenerator
 from scrapy import Request
 from scrapy.exceptions import CloseSpider
 
 
-class OtomotoSpider(scrapy.Spider):
-    """Паук otomoto.pl: обходит объявления марка за маркой через GraphQL API.
+@dataclass(frozen=True)
+class Shard:
+    """Сегмент обхода: марка и (после дробления) диапазон лет выпуска."""
 
-    Для каждой марки считается полнота обхода. Список активных ID (ActiveIdsItem),
-    по которому status_updater снимает объявления с публикации, отправляется
-    только для марок, собранных полностью.
+    make: str
+    year_from: Optional[int] = None
+    year_to: Optional[int] = None
+
+    @property
+    def filters(self) -> dict:
+        filters = {"make": self.make, "year_from": self.year_from, "year_to": self.year_to}
+        return {key: value for key, value in filters.items() if value is not None}
+
+    @property
+    def key(self) -> str:
+        """Совпадает с eadh_common.messages.shard_key_for."""
+        return ";".join(f"{key}={value}" for key, value in self.filters.items())
+
+    def split(self, min_year: int, max_year: int) -> Optional[tuple["Shard", "Shard"]]:
+        """Делит диапазон лет пополам; None — делить больше нечего (один год)."""
+        low = self.year_from if self.year_from is not None else min_year
+        high = self.year_to if self.year_to is not None else max_year
+        if low >= high:
+            return None
+        middle = (low + high) // 2
+        return Shard(self.make, low, middle), Shard(self.make, middle + 1, high)
+
+
+class OtomotoSpider(scrapy.Spider):
+    """Паук otomoto.pl: обходит объявления шард за шардом через GraphQL API.
+
+    Шард — марка; если у марки больше MAX_PAGES_PER_SHARD страниц, она дробится по годам выпуска.
+    Для каждого шарда считается полнота обхода и отправляется событие shard_finished:
+    ingestor снимает объявления с публикации только по полным шардам.
 
     Запуск для отдельных марок: ``scrapy crawl otomoto -a makes=audi,bmw``
     """
@@ -53,6 +85,11 @@ class OtomotoSpider(scrapy.Spider):
         {"name": "new_used", "value": "used"},
     ]
 
+    # Фильтры диапазона лет (как в поисковых URL otomoto: search[filter_float_year:from])
+    YEAR_FROM_FILTER = "filter_float_year:from"
+    YEAR_TO_FILTER = "filter_float_year:to"
+    MIN_YEAR = 1900
+
     BASE_PARAMS = [
         "make", "vin", "offer_type", "show_pir", "fuel_type", "gearbox",
         "country_origin", "mileage", "engine_capacity", "color", "engine_code",
@@ -72,13 +109,24 @@ class OtomotoSpider(scrapy.Spider):
         spider.max_pauses = settings.getint('MAX_PAUSES', 5)
         spider.graphql_max_retries = settings.getint('GRAPHQL_MAX_RETRIES', 3)
         spider.min_make_completeness = settings.getfloat('MIN_MAKE_COMPLETENESS', 0.95)
+        spider.max_pages_per_shard = settings.getint('MAX_PAGES_PER_SHARD', 500)
         spider.progress_enabled = cls._resolve_progress_setting(settings.get('PROGRESS_BAR', 'auto'))
 
+        # Один User-Agent на весь запуск: смена UA между запросами одной сессии выглядит подозрительно
+        user_agents = settings.getlist('USER_AGENTS')
+        if user_agents:
+            spider.user_agent = random.choice(user_agents)
+
+        raw_dir = settings.get('RAW_RESPONSES_DIR')
+        if raw_dir:
+            spider.raw_store = RawResponseStore(raw_dir, cls.SOURCE_NAME, spider.run_id,
+                                                ttl_days=settings.getint('RAW_RESPONSES_TTL_DAYS', 14))
+
         spider.logger.info(
-            f"Настройки 403: лимит подряд={spider.max_consecutive_403}, пауза={spider.pause_duration}с, "
-            f"повторов на запрос={spider.max_403_retries}, максимум пауз={spider.max_pauses}"
+            f"Запуск {spider.run_id}. Настройки 403: лимит подряд={spider.max_consecutive_403}, "
+            f"пауза={spider.pause_duration}с, повторов на запрос={spider.max_403_retries}, "
+            f"максимум пауз={spider.max_pauses}. Страниц на шард: {spider.max_pages_per_shard}"
         )
-        spider.logger.info(f"Настройки GraphQL: макс повторов={spider.graphql_max_retries}")
 
         return spider
 
@@ -92,12 +140,20 @@ class OtomotoSpider(scrapy.Spider):
     def __init__(self, makes: Optional[str] = None, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
+        # Идентификатор запуска: попадает во все сообщения и связывает их в crawl_run
+        self.run_id = str(uuid.uuid4())
+        self.run_started_at = datetime.now(timezone.utc)
+
         self.scraped_ids = set()
 
         # Загружаем список марок (все марки справочника или только переданные через -a makes=...)
         make_loader = MakeLoader(self.logger)
         self.makes_list = make_loader.get_makes(only=parse_makes_arg(makes))
-        self.current_make_index = 0
+        self.shard_queue = deque(Shard(make) for make in self.makes_list)
+        self.shards_planned = len(self.shard_queue)
+        self.shards_done = 0
+        self.current_shard: Optional[Shard] = None
+        self.current_shard_started_at: Optional[datetime] = None
         self.current_make_name = None
         self.current_make_active_ids = set()
 
@@ -127,14 +183,14 @@ class OtomotoSpider(scrapy.Spider):
         self.progress_live: Optional[Live] = None
         self.progress_enabled = True
 
-        # Для отслеживания состояния текущей марки
+        # Для отслеживания состояния текущего шарда
         self.current_make_total_ads = 0
         self.current_make_total_pages = 0
         self.current_make_processed_pages = 0
         self.current_make_failed_pages = 0
         self.make_completion_lock = False
 
-        # Итоги по маркам: make -> {expected, collected, failed_pages, complete}
+        # Итоги по шардам: shard_key -> {expected, collected, failed_pages, complete}
         self.make_results = {}
 
         # Статистика ошибок
@@ -155,10 +211,12 @@ class OtomotoSpider(scrapy.Spider):
         self.pause_count = 0
         self.is_paused = False
 
-        # Настройки для GraphQL ошибок и полноты (значения по умолчанию)
+        # Настройки для GraphQL ошибок, полноты и дробления (значения по умолчанию)
         self.graphql_max_retries = 3  # Максимум повторов
         self.min_make_completeness = 0.95
+        self.max_pages_per_shard = 500
 
+        self.raw_store: Optional[RawResponseStore] = None
         self._final_stats_logged = False
 
         self.logger.info(f"Загружено {len(self.makes_list)} марок для парсинга")
@@ -170,11 +228,14 @@ class OtomotoSpider(scrapy.Spider):
             self.logger.error("Нет марок для парсинга. Проверьте справочник марок или аргумент makes.")
             return
 
+        if self.raw_store:
+            self.raw_store.cleanup()
+
         # Запускаем прогресс-бар
         self._start_progress_bar()
 
-        # Запускаем парсинг первой марки
-        request = self._get_request_for_current_make()
+        # Запускаем парсинг первого шарда
+        request = self._get_request_for_next_shard()
         if request:
             yield request
 
@@ -195,10 +256,10 @@ class OtomotoSpider(scrapy.Spider):
                 )
             self.progress_live.start()
 
-        # Основная задача - прогресс по маркам
+        # Основная задача - прогресс по шардам
         self.main_task = self.progress.add_task(
             "[green]📈 Общий прогресс парсинга",
-            total=len(self.makes_list),
+            total=self.shards_planned,
         )
 
         # Первая строка статистики
@@ -271,14 +332,16 @@ class OtomotoSpider(scrapy.Spider):
             )
 
 
-    def _get_request_for_current_make(self):
-        """Создает запрос для парсинга текущей марки"""
-        if self.current_make_index >= len(self.makes_list):
-            self.logger.info("Все марки обработаны")
+    def _get_request_for_next_shard(self):
+        """Создает запрос первой страницы следующего шарда"""
+        if not self.shard_queue:
+            self.logger.info("Все шарды обработаны")
             return None
 
-        # Устанавливаем текущую марку
-        self.current_make_name = self.makes_list[self.current_make_index]
+        # Устанавливаем текущий шард
+        self.current_shard = self.shard_queue.popleft()
+        self.current_shard_started_at = datetime.now(timezone.utc)
+        self.current_make_name = self.current_shard.make
         self.current_make_active_ids = set()
         self.current_make_total_ads = 0
         self.current_make_total_pages = 0
@@ -290,43 +353,56 @@ class OtomotoSpider(scrapy.Spider):
         if self.main_task is not None:
             self.progress.update(
                 self.main_task,
-                completed=self.current_make_index,
-                description=f"[green]Парсинг марки: [bold cyan]{self.current_make_name}[/bold cyan]",
+                completed=self.shards_done,
+                total=self.shards_planned,
+                description=f"[green]Парсинг: [bold cyan]{self.current_shard.key}[/bold cyan]",
             )
 
-        # Создаем задачу для текущей марки
+        # Создаем задачу для текущего шарда
         if self.current_make_task is not None:
             self.progress.remove_task(self.current_make_task)
 
         self.current_make_task = self.progress.add_task(
-            f"[yellow]{self.current_make_name}[/yellow] - инициализация...",
+            f"[yellow]{self.current_shard.key}[/yellow] - инициализация...",
             total = None
         )
 
-        self.logger.info(f"Начинаем парсинг марки: {self.current_make_name} ({self.current_make_index + 1}/{len(self.makes_list)})")
+        self.logger.info(f"Начинаем парсинг шарда: {self.current_shard.key} "
+                         f"({self.shards_done + 1}/{self.shards_planned})")
 
-        # Обновляем фильтры для текущей марки
-        self._update_filters_for_make(self.current_make_name)
+        # Обновляем фильтры для текущего шарда
+        self._update_filters_for_shard(self.current_shard)
 
         return self._build_request(page=1, callback=self.parse_initial)
 
 
     def _build_request(self, page: int, callback) -> Request:
-        """Запрос страницы выдачи для текущей марки"""
+        """Запрос страницы выдачи для текущего шарда"""
         return scrapy.Request(
             url=self.build_url(page=page),
             callback=callback,
-            meta={'page_num': page, 'handle_httpstatus_list': [403], 'make_name': self.current_make_name}
+            meta={'page_num': page, 'handle_httpstatus_list': [403],
+                  'make_name': self.current_make_name, 'shard_key': self.current_shard.key}
         )
 
 
-    def _update_filters_for_make(self, make_name):
-        """Обновляет фильтры для конкретной марки"""
-        # Удаляем старый фильтр марки
-        self.BASE_FILTERS = [f for f in self.BASE_FILTERS if f.get('name') != 'filter_enum_make']
+    def _update_filters_for_shard(self, shard: Shard):
+        """Обновляет фильтры для конкретного шарда"""
+        # Удаляем старые фильтры марки и лет
+        managed = {'filter_enum_make', self.YEAR_FROM_FILTER, self.YEAR_TO_FILTER}
+        self.BASE_FILTERS = [f for f in self.BASE_FILTERS if f.get('name') not in managed]
 
-        # Добавляем новый фильтр марки
-        self.BASE_FILTERS.append({"name": "filter_enum_make", "value": make_name})
+        # Добавляем фильтры шарда
+        self.BASE_FILTERS.append({"name": "filter_enum_make", "value": shard.make})
+        if shard.year_from is not None:
+            self.BASE_FILTERS.append({"name": self.YEAR_FROM_FILTER, "value": str(shard.year_from)})
+        if shard.year_to is not None:
+            self.BASE_FILTERS.append({"name": self.YEAR_TO_FILTER, "value": str(shard.year_to)})
+
+
+    def _update_filters_for_make(self, make_name):
+        """Фильтры для всей марки (шард без ограничения по годам)"""
+        self._update_filters_for_shard(Shard(make_name))
 
 
     def build_url(self, page: int) -> str:
@@ -358,9 +434,9 @@ class OtomotoSpider(scrapy.Spider):
 
 
     def parse_initial(self, response):
-        """Обрабатывает первый ответ для марки, определяет общее количество страниц"""
-        make_name = response.meta.get('make_name', self.current_make_name)
-        context = f"parse_initial для марки {make_name}"
+        """Обрабатывает первый ответ шарда, определяет общее количество страниц"""
+        shard_key = response.meta.get('shard_key', self.current_shard.key)
+        context = f"parse_initial для шарда {shard_key}"
 
         if response.status == 403:
             yield from self._handle_403_error(response, context=context, is_initial=True)
@@ -374,22 +450,39 @@ class OtomotoSpider(scrapy.Spider):
             yield retry_request
             return
         if advert_search_data is None:
-            # Без первой страницы число объявлений неизвестно — марка не собрана
+            # Без первой страницы число объявлений неизвестно — шард не собран
             yield from self._handle_make_completion(failed=True)
             return
 
         total_ads = advert_search_data.get('totalCount', 0) or 0
-        self.current_make_total_ads = total_ads
-        self.current_make_total_pages = math.ceil(total_ads / self.ITEMS_PER_PAGE)
+        total_pages = math.ceil(total_ads / self.ITEMS_PER_PAGE)
 
-        # Обновляем задачу текущей марки
+        # Слишком много страниц: делим шард по годам, дочерние шарды обрабатываются следующими
+        if total_pages > self.max_pages_per_shard:
+            children = self.current_shard.split(self.MIN_YEAR, datetime.now(timezone.utc).year + 1)
+            if children:
+                self.logger.info(f"Шард {shard_key}: {total_ads} объявлений ({total_pages} стр.) больше лимита "
+                                 f"{self.max_pages_per_shard} стр. — делим на {children[0].key} и {children[1].key}")
+                self.shard_queue.extendleft(reversed(children))
+                self.shards_planned += 1
+                self.make_completion_lock = True
+                yield from self._next_shard()
+                return
+            self.logger.warning(f"Шард {shard_key}: {total_pages} стр. больше лимита, а делить дальше некуда — "
+                                f"собираем первые {self.max_pages_per_shard} стр., шард будет неполным")
+
+        self._save_raw(shard_key, 1, response)
+        self.current_make_total_ads = total_ads
+        self.current_make_total_pages = min(total_pages, self.max_pages_per_shard)
+
+        # Обновляем задачу текущего шарда
         if self.current_make_task is not None:
             if total_ads > 0:
                 self.progress.update(
                     self.current_make_task,
                     total=self.current_make_total_pages,
                     completed=0,
-                    description=f"[yellow]{self.current_make_name}[/yellow] - {total_ads} объявлений"
+                    description=f"[yellow]{shard_key}[/yellow] - {total_ads} объявлений"
                 )
             else:
                 # Обработка случая с 0 объявлениями
@@ -397,18 +490,18 @@ class OtomotoSpider(scrapy.Spider):
                     self.current_make_task,
                     total=1,
                     completed=0,
-                    description=f"[yellow]{self.current_make_name}[/yellow] - нет объявлений"
+                    description=f"[yellow]{shard_key}[/yellow] - нет объявлений"
                 )
 
-        self.logger.info(f"Марка {make_name}: найдено {total_ads} объявлений, страниц: {self.current_make_total_pages}")
+        self.logger.info(f"Шард {shard_key}: найдено {total_ads} объявлений, страниц: {self.current_make_total_pages}")
 
-        # Если нет объявлений, сразу завершаем марку
+        # Если нет объявлений, сразу завершаем шард
         if total_ads == 0:
             yield from self._handle_make_completion()
             return
 
         # Первая страница уже получена: разбираем ее без повторного запроса
-        yield from self._parse_edges(advert_search_data, make_name, page_num=1)
+        yield from self._parse_edges(advert_search_data, shard_key, page_num=1)
 
         # Запросы на остальные страницы
         for page_num in range(2, self.current_make_total_pages + 1):
@@ -420,8 +513,8 @@ class OtomotoSpider(scrapy.Spider):
     def parse_page(self, response):
         """Парсит страницу с объявлениями"""
         page_num = response.meta.get('page_num', 1)
-        make_name = response.meta.get('make_name', self.current_make_name)
-        context = f"parse_page марки {make_name}, страница {page_num}"
+        shard_key = response.meta.get('shard_key', self.current_shard.key)
+        context = f"parse_page шарда {shard_key}, страница {page_num}"
 
         current_time = time.time()
         if current_time - self.last_stats_update >= self.stats_update_interval:
@@ -443,10 +536,19 @@ class OtomotoSpider(scrapy.Spider):
             yield from self._handle_page_completion(ok=False)
             return
 
-        yield from self._parse_edges(advert_search_data, make_name, page_num)
+        self._save_raw(shard_key, page_num, response)
+        yield from self._parse_edges(advert_search_data, shard_key, page_num)
 
         # Отмечаем завершение обработки страницы
         yield from self._handle_page_completion(ok=True)
+
+
+    def _save_raw(self, shard_key, page_num, response):
+        if self.raw_store:
+            try:
+                self.raw_store.save(shard_key, page_num, response.body)
+            except OSError as e:
+                self.logger.warning(f"Не удалось сохранить сырой ответ: {e}")
 
 
     def _extract_search_data(self, response, context):
@@ -474,13 +576,13 @@ class OtomotoSpider(scrapy.Spider):
         return advert_search_data, None
 
 
-    def _parse_edges(self, advert_search_data, make_name, page_num):
-        """Превращает объявления страницы в ParsedAdItem"""
+    def _parse_edges(self, advert_search_data, shard_key, page_num):
+        """Превращает объявления страницы в ListingObservationItem"""
         edges = advert_search_data.get('edges', [])
 
         # Обычный лог только для значимых событий
         if page_num % 10 == 1 or page_num == self.current_make_total_pages:  # Каждая 10-я страница или последняя
-            self.logger.info(f"Марка {make_name}, страница {page_num}: найдено {len(edges)} объявлений")
+            self.logger.info(f"Шард {shard_key}, страница {page_num}: найдено {len(edges)} объявлений")
 
         for edge in edges:
             node = edge.get('node', {})
@@ -488,67 +590,66 @@ class OtomotoSpider(scrapy.Spider):
                 continue
 
             item = self._build_item(node)
-            if not item['source_ad_id']:
+            if not item['source_listing_id']:
                 self.error_stats['missing_data_errors'] += 1
                 continue
 
             # Добавляем ID в набор для отслеживания и в общий набор
-            self.current_make_active_ids.add(item['source_ad_id'])
-            self.scraped_ids.add(item['source_ad_id'])
+            self.current_make_active_ids.add(item['source_listing_id'])
+            self.scraped_ids.add(item['source_listing_id'])
 
             yield item
 
 
-    def _build_item(self, node) -> ParsedAdItem:
-        """Создание и заполнение ParsedAdItem из узла GraphQL"""
+    def _build_item(self, node) -> ListingObservationItem:
+        """Создание и заполнение ListingObservationItem из узла GraphQL"""
         # --- Извлечение параметров ---
         raw_params = node.get('parameters', [])
         params = {p.get('key'): p.get('value') for p in raw_params if p.get('key') and p.get('value') is not None}
 
         # --- Цена ---
         price_info = (node.get('price') or {}).get('amount') or {}
-        price_units = price_info.get('units')
-        currency_code = price_info.get('currencyCode')
 
-        item = ParsedAdItem()
+        item = ListingObservationItem()
 
-        item['source_ad_id'] = node.get('id')
-        item['url'] = node.get('url')
-        item['source_name'] = self.SOURCE_NAME
+        item['run_id'] = self.run_id
+        item['source'] = self.SOURCE_NAME
         item['country_code'] = self.COUNTRY_CODE
-        item['scraped_at'] = datetime.now(timezone.utc).isoformat()
+        item['source_listing_id'] = node.get('id')
+        item['observed_at'] = datetime.now(timezone.utc).isoformat()
 
+        item['url'] = node.get('url')
         item['title'] = node.get('title')
-        item['description'] = node.get('shortDescription')
-        item['posted_on_source_at'] = node.get('createdAt')
+        item['posted_at'] = node.get('createdAt')
 
-        item['price'] = price_units
-        item['currency'] = currency_code
+        item['price'] = price_info.get('units')
+        item['currency'] = price_info.get('currencyCode')
 
-        item['make_str'] = params.get('make')
-        item['model_str'] = params.get('model')
-        item['version_str'] = params.get('version')
-        item['generation_str'] = params.get('generation')
+        item['make'] = params.get('make')
+        item['model'] = params.get('model')
+        item['version'] = params.get('version')
+        item['generation'] = params.get('generation')
 
         item['year'] = self._to_int(params.get('year'))
-        item['mileage'] = self._to_int(params.get('mileage'))
+        item['mileage_km'] = self._to_int(params.get('mileage'))
 
-        item['fuel_type_str'] = params.get('fuel_type')
+        item['fuel_type'] = params.get('fuel_type')
         item['engine_capacity_cm3'] = self._to_int(params.get('engine_capacity'))
         item['engine_power_hp'] = self._to_int(params.get('engine_power'))
 
-        item['gearbox_str'] = params.get('gearbox')
-        item['transmission_str'] = params.get('transmission')
-        item['color_str'] = params.get('color')
+        item['gearbox'] = params.get('gearbox')
+        item['transmission'] = params.get('transmission')
+        item['color'] = params.get('color')
+        item['vin'] = params.get('vin')
 
         location_data = node.get('location') or {}
-        item['city_str'] = (location_data.get('city') or {}).get('name')
-        item['region_str'] = (location_data.get('region') or {}).get('name')
+        item['city'] = (location_data.get('city') or {}).get('name')
+        item['region'] = (location_data.get('region') or {}).get('name')
 
-        item['seller_link'] = (node.get('sellerLink') or {}).get('id')
+        item['seller_ref'] = (node.get('sellerLink') or {}).get('id')
 
         main_photo = node.get('mainPhoto') or {}
-        item['image_urls'] = [main_photo['url']] if main_photo.get('url') else []
+        item['image_url'] = main_photo.get('url')
 
         return item
 
@@ -567,11 +668,11 @@ class OtomotoSpider(scrapy.Spider):
         # Обновляем статистику Scrapy
         self._update_scrapy_stats()
 
-        # Обновляем прогресс страниц для текущей марки
+        # Обновляем прогресс страниц для текущего шарда
         if self.current_make_task is not None:
             if self.current_make_total_pages > 0:
                 progress_percentage = (self.current_make_processed_pages / self.current_make_total_pages) * 100
-                description = (f"[yellow]{self.current_make_name}[/yellow] - "
+                description = (f"[yellow]{self.current_shard.key}[/yellow] - "
                                f"стр. {self.current_make_processed_pages}/{self.current_make_total_pages} "
                                f"({progress_percentage:.1f}%) • "
                                f"[bold]{len(self.current_make_active_ids)}[/bold] объявлений")
@@ -586,7 +687,7 @@ class OtomotoSpider(scrapy.Spider):
                     self.current_make_task,
                     completed=1,
                     total=1,
-                    description=f"[yellow]{self.current_make_name}[/yellow] - нет объявлений (0)"
+                    description=f"[yellow]{self.current_shard.key}[/yellow] - нет объявлений (0)"
                 )
 
         if (self.current_make_processed_pages >= max(self.current_make_total_pages, 1)
@@ -595,7 +696,7 @@ class OtomotoSpider(scrapy.Spider):
 
 
     def _is_current_make_complete(self, failed: bool) -> bool:
-        """Марка собрана полностью: все страницы получены и собрано достаточно объявлений"""
+        """Шард собран полностью: все страницы получены и собрано достаточно объявлений"""
         if failed or self.current_make_failed_pages > 0:
             return False
         if self.current_make_total_ads == 0:
@@ -605,60 +706,83 @@ class OtomotoSpider(scrapy.Spider):
 
 
     def _handle_make_completion(self, failed: bool = False):
-        """Обрабатывает завершение марки и переходит к следующей"""
+        """Завершает шард: событие shard_finished и переход к следующему шарду"""
         if self.make_completion_lock:
             return
         self.make_completion_lock = True
 
-        if self.current_make_name:
-            collected = len(self.current_make_active_ids)
-            complete = self._is_current_make_complete(failed)
-            self.make_results[self.current_make_name] = {
-                'expected': self.current_make_total_ads,
-                'collected': collected,
-                'failed_pages': self.current_make_failed_pages + (1 if failed else 0),
-                'complete': complete,
-            }
+        shard = self.current_shard
+        collected = len(self.current_make_active_ids)
+        complete = self._is_current_make_complete(failed)
+        failed_pages = self.current_make_failed_pages + (1 if failed else 0)
+        self.make_results[shard.key] = {
+            'expected': self.current_make_total_ads,
+            'collected': collected,
+            'failed_pages': failed_pages,
+            'complete': complete,
+        }
 
-            # Завершаем задачу текущей марки
-            if self.current_make_task is not None:
-                status = "[green]✅" if complete else "[red]⚠️"
-                self.progress.update(
-                    self.current_make_task,
-                    completed=max(self.current_make_total_pages, 1),
-                    description=f"{status} {self.current_make_name}[/] - {collected} объявлений"
-                )
+        # Завершаем задачу текущего шарда
+        if self.current_make_task is not None:
+            status = "[green]✅" if complete else "[red]⚠️"
+            self.progress.update(
+                self.current_make_task,
+                completed=max(self.current_make_total_pages, 1),
+                description=f"{status} {shard.key}[/] - {collected} объявлений"
+            )
 
-            if complete:
-                self.logger.info(
-                    f"Завершен парсинг марки {self.current_make_name}: {collected} ID "
-                    f"из {self.current_make_total_ads} ожидаемых"
-                )
-                # Список активных ID отправляем только для полностью собранной марки,
-                # иначе status_updater снимет с публикации живые объявления
-                yield ActiveIdsItem(
-                    source_name=self.SOURCE_NAME,
-                    make_str=self.current_make_name,
-                    ad_ids=sorted(self.current_make_active_ids),
-                    expected_count=self.current_make_total_ads,
-                    complete=True,
-                    timestamp=datetime.now(timezone.utc).isoformat(),
-                )
-            else:
-                self.logger.warning(
-                    f"Марка {self.current_make_name} собрана не полностью: {collected} из "
-                    f"{self.current_make_total_ads}, неудачных страниц: {self.make_results[self.current_make_name]['failed_pages']}. "
-                    f"Статусы объявлений этой марки не обновляются."
-                )
+        if complete:
+            self.logger.info(f"Завершен парсинг шарда {shard.key}: {collected} ID "
+                             f"из {self.current_make_total_ads} ожидаемых")
+        else:
+            self.logger.warning(
+                f"Шард {shard.key} собран не полностью: {collected} из {self.current_make_total_ads}, "
+                f"неудачных страниц: {failed_pages}. Статусы объявлений этого шарда не обновляются."
+            )
 
-        # Переходим к следующей марке
-        self.current_make_index += 1
-        next_request = self._get_request_for_current_make()
+        # Событие отправляется всегда: ingestor учитывает неполные шарды в отчёте,
+        # но снимает объявления с публикации только по полным
+        yield CrawlEventItem(
+            event='shard_finished',
+            run_id=self.run_id,
+            source=self.SOURCE_NAME,
+            shard_key=shard.key,
+            filters=shard.filters,
+            started_at=self.current_shard_started_at.isoformat(),
+            finished_at=datetime.now(timezone.utc).isoformat(),
+            expected_count=self.current_make_total_ads,
+            collected_count=collected,
+            pages_total=self.current_make_total_pages,
+            pages_failed=failed_pages,
+            complete=complete,
+        )
+
+        self.shards_done += 1
+        yield from self._next_shard()
+
+
+    def _next_shard(self):
+        """Переходит к следующему шарду"""
+        next_request = self._get_request_for_next_shard()
         if next_request:
             yield next_request
         elif self.main_task is not None:
             # Завершаем общий прогресс
-            self.progress.update(self.main_task, completed=len(self.makes_list))
+            self.progress.update(self.main_task, completed=self.shards_planned)
+
+
+    def run_summary(self) -> dict:
+        """Итоги запуска для события run_finished и отчета"""
+        complete = sum(1 for r in self.make_results.values() if r['complete'])
+        return {
+            'shards_planned': self.shards_planned,
+            'shards_done': len(self.make_results),
+            'shards_complete': complete,
+            'shards_incomplete': len(self.make_results) - complete,
+            'shards_not_started': self.shards_planned - len(self.make_results),
+            'pauses': self.pause_count,
+            **self.error_stats,
+        }
 
 
     def _stop_progress_bar(self):
@@ -676,6 +800,7 @@ class OtomotoSpider(scrapy.Spider):
         self._final_stats_logged = True
 
         stats = self.crawler.stats
+        summary = self.run_summary()
 
         # Получаем финальную статистику
         total_time = time.time() - self.stats_start_time
@@ -684,20 +809,13 @@ class OtomotoSpider(scrapy.Spider):
 
         pages_per_min = (pages_crawled / total_time) * 60 if total_time > 0 else 0
         items_per_min = (items_scraped / total_time) * 60 if total_time > 0 else 0
-        makes_per_min = self.current_make_index / (total_time / 60) if total_time > 0 else 0
+        shards_per_min = summary['shards_done'] / (total_time / 60) if total_time > 0 else 0
 
-        complete_makes = [m for m, r in self.make_results.items() if r['complete']]
-        incomplete_makes = [m for m, r in self.make_results.items() if not r['complete']]
-        not_started = len(self.makes_list) - len(self.make_results)
-
-        # Счетчики для отчета о прогоне и будущих алертов
-        stats.set_value('otomoto/makes_total', len(self.makes_list))
-        stats.set_value('otomoto/makes_complete', len(complete_makes))
-        stats.set_value('otomoto/makes_incomplete', len(incomplete_makes))
-        stats.set_value('otomoto/makes_not_started', not_started)
-        stats.set_value('otomoto/pauses', self.pause_count)
-        for key, value in self.error_stats.items():
+        # Счетчики для отчета о прогоне
+        for key, value in summary.items():
             stats.set_value(f'otomoto/{key}', value)
+
+        incomplete_shards = [key for key, r in self.make_results.items() if not r['complete']]
 
         # Создаем красивую финальную таблицу
         table = Table(title="🎯 Финальная статистика парсинга")
@@ -705,10 +823,10 @@ class OtomotoSpider(scrapy.Spider):
         table.add_column("Значение", style="magenta", width=20)
         table.add_column("Скорость", style="green", width=15)
 
-        table.add_row("Обработано марок", str(len(self.make_results)), f"{makes_per_min:.1f}/мин")
-        table.add_row("Собрано полностью", str(len(complete_makes)), "")
-        table.add_row("Собрано не полностью", str(len(incomplete_makes)), "")
-        table.add_row("Не начаты", str(not_started), "")
+        table.add_row("Обработано шардов", str(summary['shards_done']), f"{shards_per_min:.1f}/мин")
+        table.add_row("Собрано полностью", str(summary['shards_complete']), "")
+        table.add_row("Собрано не полностью", str(summary['shards_incomplete']), "")
+        table.add_row("Не начаты", str(summary['shards_not_started']), "")
         table.add_row("Обработано страниц", str(pages_crawled), f"{pages_per_min:.0f}/мин")
         table.add_row("Собрано объявлений", str(items_scraped), f"{items_per_min:.0f}/мин")
         table.add_row("Время работы", time.strftime('%H:%M:%S', time.gmtime(total_time)), "")
@@ -725,11 +843,11 @@ class OtomotoSpider(scrapy.Spider):
             self.console.print()
 
         # Также логируем в обычный лог (для файлов логов)
-        self.logger.info("=== ФИНАЛЬНАЯ СТАТИСТИКА ПАРСИНГА ===")
-        self.logger.info(f"Марок: всего {len(self.makes_list)}, полностью {len(complete_makes)}, "
-                         f"не полностью {len(incomplete_makes)}, не начато {not_started}")
-        if incomplete_makes:
-            self.logger.warning(f"Марки, собранные не полностью: {incomplete_makes}")
+        self.logger.info(f"=== ФИНАЛЬНАЯ СТАТИСТИКА ЗАПУСКА {self.run_id} ===")
+        self.logger.info(f"Шардов: запланировано {summary['shards_planned']}, полностью {summary['shards_complete']}, "
+                         f"не полностью {summary['shards_incomplete']}, не начато {summary['shards_not_started']}")
+        if incomplete_shards:
+            self.logger.warning(f"Шарды, собранные не полностью: {incomplete_shards}")
         self.logger.info(f"Обработано страниц: {pages_crawled} ({pages_per_min:.0f}/мин)")
         self.logger.info(f"Собрано объявлений: {items_scraped} ({items_per_min:.0f}/мин)")
         self.logger.info(f"Время работы: {time.strftime('%H:%M:%S', time.gmtime(total_time))}")
@@ -749,7 +867,7 @@ class OtomotoSpider(scrapy.Spider):
         if self.current_make_task is not None:
             self.progress.update(
                 self.current_make_task,
-                description=f"[red]⚠️ {self.current_make_name}[/red] - 403 ошибка ({self.consecutive_403_count}/{self.max_consecutive_403})"
+                description=f"[red]⚠️ {self.current_shard.key}[/red] - 403 ошибка ({self.consecutive_403_count}/{self.max_consecutive_403})"
             )
 
         self.logger.error(f"Получен статус 403 (Forbidden) в контексте: {context}. "
@@ -788,7 +906,7 @@ class OtomotoSpider(scrapy.Spider):
         if self.current_make_task is not None:
             self.progress.update(
                 self.current_make_task,
-                description=f"[red]⏸️ {self.current_make_name}[/red] - пауза {self.pause_duration//60} мин"
+                description=f"[red]⏸️ {self.current_shard.key}[/red] - пауза {self.pause_duration//60} мин"
             )
 
         self.logger.warning(f"🚨 ДОСТИГНУТО МАКСИМАЛЬНОЕ КОЛИЧЕСТВО 403 ОШИБОК ПОДРЯД ({self.max_consecutive_403})")
@@ -813,7 +931,7 @@ class OtomotoSpider(scrapy.Spider):
         if self.current_make_task is not None:
             self.progress.update(
                 self.current_make_task,
-                description=f"[green]▶️ {self.current_make_name}[/green] - возобновление работы"
+                description=f"[green]▶️ {self.current_shard.key}[/green] - возобновление работы"
             )
 
         self.logger.info(f"⏯️ ВОЗОБНОВЛЯЕМ РАБОТУ ПОСЛЕ ПАУЗЫ")

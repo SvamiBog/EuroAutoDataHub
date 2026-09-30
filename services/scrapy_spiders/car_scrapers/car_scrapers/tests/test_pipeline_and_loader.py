@@ -6,65 +6,104 @@ import pytest
 from kafka.errors import NoBrokersAvailable
 from scrapy.utils.test import get_crawler
 
-from ..items import ActiveIdsItem, ParsedAdItem
+from eadh_common.messages import (
+    TOPIC_CRAWL_EVENTS, TOPIC_LISTING_OBSERVATIONS, RunFinished, RunStarted, crawl_event_adapter,
+)
+
+from ..items import ListingObservationItem
 from ..pipelines import KafkaPipeline
 from ..spiders.otomoto import OtomotoSpider
 from ..utils.make_loader import MakeLoader, parse_makes_arg
 
 
 @pytest.fixture
-def pipeline():
-    crawler = get_crawler(OtomotoSpider, {
+def crawler():
+    return get_crawler(OtomotoSpider, {
         "KAFKA_BOOTSTRAP_SERVERS": "kafka1:9092,kafka2:9092",
-        "KAFKA_TOPIC_ADS": "ads",
-        "KAFKA_TOPIC_ACTIVE_IDS": "active",
+        "KAFKA_TOPIC_OBSERVATIONS": "obs",
+        "KAFKA_TOPIC_CRAWL_EVENTS": "events",
+        "PROGRESS_BAR": "false",
     })
+
+
+@pytest.fixture
+def spider(crawler):
+    return OtomotoSpider.from_crawler(crawler, makes="audi,bmw")
+
+
+@pytest.fixture
+def pipeline(crawler):
     pipe = KafkaPipeline.from_crawler(crawler)
     pipe.producer = MagicMock()
     return pipe
+
+
+def sent(pipeline):
+    """[(topic, key, value)] всех отправленных сообщений, value — как после JSON-сериализации."""
+    return [(c.args[0], c.kwargs["key"], json.loads(json.dumps(c.kwargs["value"], default=str)))
+            for c in pipeline.producer.send.call_args_list]
+
+
+def test_default_topics_match_contract():
+    from .. import settings as project_settings
+    assert project_settings.KAFKA_TOPIC_OBSERVATIONS == TOPIC_LISTING_OBSERVATIONS
+    assert project_settings.KAFKA_TOPIC_CRAWL_EVENTS == TOPIC_CRAWL_EVENTS
 
 
 def test_bootstrap_servers_from_comma_separated_setting(pipeline):
     assert pipeline.kafka_bootstrap_servers == ["kafka1:9092", "kafka2:9092"]
 
 
-def test_ad_goes_to_ads_topic(pipeline):
-    item = ParsedAdItem(source_ad_id="42", url="https://x/42")
-    pipeline.process_item(item, spider=MagicMock())
-    topic = pipeline.producer.send.call_args.args[0]
-    kwargs = pipeline.producer.send.call_args.kwargs
-    assert topic == "ads"
-    assert kwargs["key"] == b"42"
-    assert kwargs["value"]["source_ad_id"] == "42"
+def test_observation_goes_to_observations_topic(pipeline, spider):
+    item = ListingObservationItem(source="otomoto.pl", source_listing_id="42", run_id=spider.run_id)
+    pipeline.process_item(item, spider)
+    [(topic, key, value)] = sent(pipeline)
+    assert (topic, key) == ("obs", b"otomoto.pl:42")
+    assert value["schema_version"] == 1 and value["source_listing_id"] == "42"
 
 
-def test_active_ids_go_to_active_topic(pipeline):
-    item = ActiveIdsItem(source_name="otomoto.pl", make_str="audi", ad_ids=["1"], complete=True, expected_count=1)
-    pipeline.process_item(item, spider=MagicMock())
-    assert pipeline.producer.send.call_args.args[0] == "active"
-    assert pipeline.producer.send.call_args.kwargs["key"] == b"otomoto.pl:audi"
-    # сообщение должно сериализоваться в JSON
-    json.dumps(pipeline.producer.send.call_args.kwargs["value"])
+def test_run_started_is_sent_on_open(pipeline, spider, monkeypatch):
+    producer = pipeline.producer
+    monkeypatch.setattr(pipeline, "_create_producer", lambda: producer)
+    pipeline.open_spider(spider)
+    [(topic, key, value)] = sent(pipeline)
+    assert (topic, key) == ("events", spider.run_id.encode())
+    started = crawl_event_adapter.validate_python(value)
+    assert isinstance(started, RunStarted) and started.shards_planned == 2
+
+
+def test_run_finished_is_sent_on_close_with_reason(pipeline, spider):
+    producer = pipeline.producer
+    pipeline.spider_closed(spider, reason="blocked_403")
+    [(topic, _, value)] = [(c.args[0], c.kwargs["key"], json.loads(json.dumps(c.kwargs["value"], default=str)))
+                           for c in producer.send.call_args_list]
+    finished = crawl_event_adapter.validate_python(value)
+    assert isinstance(finished, RunFinished)
+    assert finished.finish_reason == "blocked_403"
+    assert finished.stats["shards_planned"] == 2
+    producer.flush.assert_called()
+    producer.close.assert_called_once()
+    assert pipeline.producer is None
+
+
+def test_close_spider_only_flushes(pipeline, spider):
+    pipeline.close_spider(spider)
+    pipeline.producer.send.assert_not_called()
+    pipeline.producer.flush.assert_called_once()
+    pipeline.producer.close.assert_not_called()
 
 
 def test_send_errors_are_counted(pipeline):
-    pipeline._on_send_error("ads", "42", Exception("boom"))
+    pipeline._on_send_error("obs", "42", Exception("boom"))
     assert pipeline.stats.get_value("kafka/send_failed") == 1
 
 
-def test_open_spider_fails_fast_without_kafka(pipeline, monkeypatch):
+def test_open_spider_fails_fast_without_kafka(pipeline, spider, monkeypatch):
     def unavailable():
         raise NoBrokersAvailable()
     monkeypatch.setattr(pipeline, "_create_producer", unavailable)
     with pytest.raises(NoBrokersAvailable):
-        pipeline.open_spider(MagicMock())
-
-
-def test_close_spider_does_not_send_active_ids(pipeline):
-    spider = MagicMock(scraped_ids={"1", "2"})
-    pipeline.close_spider(spider)
-    pipeline.producer.send.assert_not_called()
-    pipeline.producer.flush.assert_called_once()
+        pipeline.open_spider(spider)
 
 
 class TestMakeLoader:

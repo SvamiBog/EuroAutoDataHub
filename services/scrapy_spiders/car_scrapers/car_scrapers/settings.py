@@ -17,12 +17,20 @@ NEWSPIDER_MODULE = "car_scrapers.spiders"
 ADDONS = {}
 
 
-# Crawl responsibly by identifying yourself (and your website) on the user-agent
-USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) ' \
-             'Chrome/98.0.4758.109 Safari/537.36 OPR/84.0.4316.50'
+# User-Agent: паук выбирает один из списка на весь запуск (актуальные версии браузеров)
+USER_AGENTS = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) '
+    'Chrome/140.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) '
+    'Chrome/140.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:143.0) Gecko/20100101 Firefox/143.0',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) '
+    'Version/18.6 Safari/605.1.15',
+]
+USER_AGENT = USER_AGENTS[0]
 
-# Obey robots.txt rules
-ROBOTSTXT_OBEY = False
+# Соблюдать robots.txt: решение по каждой площадке (см. docs/ROADMAP.md, 1.4 и 4.1)
+ROBOTSTXT_OBEY = os.getenv("SCRAPY_ROBOTSTXT_OBEY", "false").lower() == "true"
 
 # Configure maximum concurrent requests performed by Scrapy (default: 16)
 CONCURRENT_REQUESTS = int(os.getenv("SCRAPY_CONCURRENT_REQUESTS", "32"))
@@ -89,6 +97,14 @@ GRAPHQL_MAX_RETRIES = int(os.getenv("SCRAPY_GRAPHQL_MAX_RETRIES", "3"))
 # не меньше этой доли от totalCount (объявления сдвигаются между страницами во время обхода)
 MIN_MAKE_COMPLETENESS = float(os.getenv("SCRAPY_MIN_MAKE_COMPLETENESS", "0.95"))
 
+# Если у шарда (марки) больше страниц, он делится по годам выпуска. Площадки обычно
+# ограничивают глубину выдачи; лимит otomoto нужно подтвердить на живом сайте
+MAX_PAGES_PER_SHARD = int(os.getenv("SCRAPY_MAX_PAGES_PER_SHARD", "500"))
+
+# Сырые ответы площадки (gzip) для переразбора и отладки; пусто — не сохранять
+RAW_RESPONSES_DIR = os.getenv("SCRAPY_RAW_RESPONSES_DIR", "")
+RAW_RESPONSES_TTL_DAYS = int(os.getenv("SCRAPY_RAW_RESPONSES_TTL_DAYS", "14"))
+
 # Loging setting
 LOG_ENABLED = True
 LOGSTATS_INTERVAL = 0
@@ -110,11 +126,9 @@ ITEM_PIPELINES = {
 # Внутри docker-compose: kafka_broker:9092, с хост-машины: localhost:9094
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka_broker:9092").split(",")
 
-# Имя топика Kafka, куда будут отправляться объявления
-KAFKA_TOPIC_ADS = os.getenv("KAFKA_TOPIC_ADS", "parsed_car_ads")
-
-# Имя топика для отправки списка активных ID
-KAFKA_TOPIC_ACTIVE_IDS = os.getenv("KAFKA_TOPIC_ACTIVE_IDS", "active_car_ids")
+# Топики по контракту libs/eadh_common/messages.py
+KAFKA_TOPIC_OBSERVATIONS = os.getenv("KAFKA_TOPIC_OBSERVATIONS", "listing_observations")
+KAFKA_TOPIC_CRAWL_EVENTS = os.getenv("KAFKA_TOPIC_CRAWL_EVENTS", "crawl_events")
 
 # Дополнительные параметры KafkaProducer
 KAFKA_PRODUCER_CONFIG = {

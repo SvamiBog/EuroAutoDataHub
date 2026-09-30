@@ -5,7 +5,7 @@ from urllib.parse import parse_qs, urlparse
 from scrapy.http import Request
 
 # Импорты из проекта
-from ..items import ParsedAdItem
+from ..items import ListingObservationItem  # noqa: F401
 from ..spiders.otomoto import OtomotoSpider
 import scrapy
 
@@ -29,11 +29,11 @@ class TestOtomotoSpiderBasics:
     def test_makes_with_empty_list(self, simple_with_empty_spider):
         """Тест: Проверяем работу спайдера с пустым списком марок."""
         assert simple_with_empty_spider.makes_list == []
-        assert simple_with_empty_spider.current_make_index == 0
+        assert simple_with_empty_spider.shards_done == 0
 
     def test_spider_initial_state(self, simple_spider):
         """Тест: Проверяем начальное состояние спайдера."""
-        assert simple_spider.current_make_index == 0
+        assert simple_spider.shards_done == 0
         assert simple_spider.max_consecutive_403 == 3
         assert simple_spider.pause_duration == 300
         assert simple_spider.scraped_ids == set()
@@ -254,7 +254,7 @@ class TestOtomotoDataProcessing:
     def test_make_index_bounds(self, simple_spider):
         """Тест: Проверяем границы индекса марок."""
         # Индекс должен быть в пределах списка марок
-        assert 0 <= simple_spider.current_make_index < len(simple_spider.makes_list)
+        assert 0 <= simple_spider.shards_done < len(simple_spider.makes_list)
 
     def test_scraped_ids_is_set(self, simple_spider):
         """Тест: Проверяем, что scraped_ids это множество."""
