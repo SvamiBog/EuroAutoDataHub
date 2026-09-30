@@ -53,7 +53,12 @@ class ScrapedAdSchema(BaseModel):
 class ActiveIdsSchema(BaseModel):
     """
     Схема для валидации сообщения со списком активных ID.
+
+    Снимать объявления с публикации можно только по полному обходу марки,
+    поэтому сообщения без явного complete=True (в том числе старого формата) игнорируются.
     """
     source_name: str
     ad_ids: Set[str]
     make_str: str
+    expected_count: Optional[int] = None
+    complete: bool = False

@@ -33,6 +33,12 @@ class Settings(BaseSettings):
     KAFKA_TOPIC_ADS: str = Field(default="scraped_ads", validation_alias="KAFKA_TOPIC_ADS")
     KAFKA_CONSUMER_GROUP: str = Field(default="ad-processor-group", validation_alias="KAFKA_CONSUMER_GROUP")
 
+    # Предохранитель status_updater: если по одному сообщению пришлось бы снять с публикации
+    # больше этой доли активных объявлений марки, снятие пропускается (вероятна ошибка обхода)
+    MAX_DELIST_RATIO: float = Field(default=0.3, validation_alias="MAX_DELIST_RATIO")
+    # Предохранитель не применяется к маркам, у которых в БД меньше стольких активных объявлений
+    MIN_ADS_FOR_DELIST_GUARD: int = Field(default=20, validation_alias="MIN_ADS_FOR_DELIST_GUARD")
+
 
 # Создаем экземпляр настроек, который будет использоваться в других модулях
 settings = Settings()
