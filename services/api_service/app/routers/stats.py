@@ -13,12 +13,6 @@ from app.crud.stats import (
     get_model_stats,
     get_market_trends
 )
-from app.schemas.stats import (
-    GeneralStats,
-    MakeStats,
-    ModelStats,
-    MarketTrends
-)
 
 router = APIRouter()
 
@@ -60,17 +54,17 @@ async def get_makes_statistics(
 
 @router.get("/models")
 async def get_models_statistics(
-    make_name: Optional[str] = Query(None, description="Фильтр по марке"),
+    make: Optional[str] = Query(None, description="Фильтр по марке"),
     limit: int = Query(10, ge=1, le=50, description="Количество моделей в результате"),
     session: AsyncSession = Depends(get_session)
 ):
     """Получение статистики по моделям автомобилей"""
     
-    stats = await get_model_stats(session, make_name, limit)
+    stats = await get_model_stats(session, make, limit)
     
     return {
         "model_stats": stats,
-        "make_filter": make_name,
+        "make_filter": make,
         "count": len(stats)
     }
 
@@ -150,8 +144,8 @@ async def get_dashboard_summary(session: AsyncSession = Depends(get_session)):
         "summary": {
             "total_ads": general["total_ads"],
             "active_ads": general["active_ads"],
-            "avg_price": general["avg_price"],
+            "avg_price_eur": general["avg_price_eur"],
             "most_popular_make": general["most_popular_make"],
-            "data_sources": len(set([make["make_name"] for make in top_makes]))
+            "data_sources": general["sources"]
         }
     }
