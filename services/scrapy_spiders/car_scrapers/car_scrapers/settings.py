@@ -101,6 +101,10 @@ MIN_MAKE_COMPLETENESS = float(os.getenv("SCRAPY_MIN_MAKE_COMPLETENESS", "0.95"))
 # ограничивают глубину выдачи; лимит otomoto нужно подтвердить на живом сайте
 MAX_PAGES_PER_SHARD = int(os.getenv("SCRAPY_MAX_PAGES_PER_SHARD", "500"))
 
+# Если столько шардов подряд не удалось начать (ошибка API, HTTP, блокировка), обход останавливается
+# с причиной shard_failures: вероятно, площадка изменила API. 0 — не останавливать
+MAX_CONSECUTIVE_FAILED_SHARDS = int(os.getenv("SCRAPY_MAX_CONSECUTIVE_FAILED_SHARDS", "5"))
+
 # Сырые ответы площадки (gzip) для переразбора и отладки; пусто — не сохранять
 RAW_RESPONSES_DIR = os.getenv("SCRAPY_RAW_RESPONSES_DIR", "")
 RAW_RESPONSES_TTL_DAYS = int(os.getenv("SCRAPY_RAW_RESPONSES_TTL_DAYS", "14"))

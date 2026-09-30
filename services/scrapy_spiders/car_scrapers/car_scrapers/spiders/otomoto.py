@@ -90,6 +90,9 @@ class OtomotoSpider(scrapy.Spider):
     YEAR_TO_FILTER = "filter_float_year:to"
     MIN_YEAR = 1900
 
+    # Поля, заполненность которых попадает в итоги запуска: резкое падение — признак смены формата ответа
+    TRACKED_FIELDS = ("price", "currency", "make", "model", "year", "mileage_km", "fuel_type")
+
     BASE_PARAMS = [
         "make", "vin", "offer_type", "show_pir", "fuel_type", "gearbox",
         "country_origin", "mileage", "engine_capacity", "color", "engine_code",
@@ -110,6 +113,7 @@ class OtomotoSpider(scrapy.Spider):
         spider.graphql_max_retries = settings.getint('GRAPHQL_MAX_RETRIES', 3)
         spider.min_make_completeness = settings.getfloat('MIN_MAKE_COMPLETENESS', 0.95)
         spider.max_pages_per_shard = settings.getint('MAX_PAGES_PER_SHARD', 500)
+        spider.max_consecutive_failed_shards = settings.getint('MAX_CONSECUTIVE_FAILED_SHARDS', 5)
         spider.progress_enabled = cls._resolve_progress_setting(settings.get('PROGRESS_BAR', 'auto'))
 
         # Один User-Agent на весь запуск: смена UA между запросами одной сессии выглядит подозрительно
@@ -192,6 +196,9 @@ class OtomotoSpider(scrapy.Spider):
 
         # Итоги по шардам: shard_key -> {expected, collected, failed_pages, complete}
         self.make_results = {}
+        # Разобрано объявлений и сколько из них с заполненным полем (для проверки формата ответа)
+        self.items_parsed = 0
+        self.fields_filled = {field: 0 for field in self.TRACKED_FIELDS}
 
         # Статистика ошибок
         self.error_stats = {
@@ -199,7 +206,8 @@ class OtomotoSpider(scrapy.Spider):
             'json_decode_errors': 0,
             'graphql_errors': 0,
             'graphql_retries': 0,
-            'missing_data_errors': 0
+            'missing_data_errors': 0,
+            'http_errors': 0,
         }
 
         # Обработка 403 (значения по умолчанию, переопределяются в from_crawler)
@@ -215,6 +223,9 @@ class OtomotoSpider(scrapy.Spider):
         self.graphql_max_retries = 3  # Максимум повторов
         self.min_make_completeness = 0.95
         self.max_pages_per_shard = 500
+        # Столько шардов подряд без первой страницы — площадка не отвечает или сменила API: обход останавливается
+        self.max_consecutive_failed_shards = 5
+        self.consecutive_failed_shards = 0
 
         self.raw_store: Optional[RawResponseStore] = None
         self._final_stats_logged = False
@@ -381,6 +392,7 @@ class OtomotoSpider(scrapy.Spider):
         return scrapy.Request(
             url=self.build_url(page=page),
             callback=callback,
+            errback=self._on_request_error,
             meta={'page_num': page, 'handle_httpstatus_list': [403],
                   'make_name': self.current_make_name, 'shard_key': self.current_shard.key}
         )
@@ -593,6 +605,10 @@ class OtomotoSpider(scrapy.Spider):
             if not item['source_listing_id']:
                 self.error_stats['missing_data_errors'] += 1
                 continue
+            self.items_parsed += 1
+            for field in self.TRACKED_FIELDS:
+                if item.get(field) not in (None, ''):
+                    self.fields_filled[field] += 1
 
             # Добавляем ID в набор для отслеживания и в общий набор
             self.current_make_active_ids.add(item['source_listing_id'])
@@ -758,6 +774,14 @@ class OtomotoSpider(scrapy.Spider):
         )
 
         self.shards_done += 1
+        # failed — не получена первая страница шарда (ошибка API, HTTP или блокировка)
+        self.consecutive_failed_shards = self.consecutive_failed_shards + 1 if failed else 0
+        if 0 < self.max_consecutive_failed_shards <= self.consecutive_failed_shards:
+            self.logger.critical(
+                f"🚨 {self.consecutive_failed_shards} шардов подряд без первой страницы — площадка не отвечает "
+                f"или изменила API. Останавливаем обход."
+            )
+            raise CloseSpider('shard_failures')
         yield from self._next_shard()
 
 
@@ -780,7 +804,10 @@ class OtomotoSpider(scrapy.Spider):
             'shards_complete': complete,
             'shards_incomplete': len(self.make_results) - complete,
             'shards_not_started': self.shards_planned - len(self.make_results),
+            'makes': len(self.makes_list),
             'pauses': self.pause_count,
+            'items_parsed': self.items_parsed,
+            'fields_filled': dict(self.fields_filled),
             **self.error_stats,
         }
 
@@ -836,6 +863,7 @@ class OtomotoSpider(scrapy.Spider):
         table.add_row("Ошибки GraphQL", str(self.error_stats['graphql_errors']), "")
         table.add_row("Повторы GraphQL", str(self.error_stats['graphql_retries']), "")
         table.add_row("Ошибки JSON", str(self.error_stats['json_decode_errors']), "")
+        table.add_row("Ошибки HTTP и сети", str(self.error_stats['http_errors']), "")
 
         if self.progress_enabled:
             self.console.print()  # Пустая строка
@@ -852,7 +880,7 @@ class OtomotoSpider(scrapy.Spider):
         self.logger.info(f"Собрано объявлений: {items_scraped} ({items_per_min:.0f}/мин)")
         self.logger.info(f"Время работы: {time.strftime('%H:%M:%S', time.gmtime(total_time))}")
         self.logger.info(f"Ошибки: 403={self.error_stats['forbidden_403']} (пауз: {self.pause_count}), "
-                         f"GraphQL={self.error_stats['graphql_errors']}")
+                         f"GraphQL={self.error_stats['graphql_errors']}, HTTP={self.error_stats['http_errors']}")
 
 
     def _handle_403_error(self, response, context="unknown", is_initial=False):
@@ -970,6 +998,29 @@ class OtomotoSpider(scrapy.Spider):
         else:
             self.logger.error(f"GraphQL ошибки в {context}: {errors}")
         return None
+
+    def _on_request_error(self, failure):
+        """Запрос не удался: HTTP-ошибка (кроме 403) или сетевая ошибка после всех повторов.
+
+        Без этого обработчика упавший запрос не завершал бы страницу, шард не завершался бы
+        и обход останавливался бы на нём.
+        """
+        request = failure.request
+        response = getattr(failure.value, 'response', None)
+        reason = f"HTTP {response.status}" if response is not None else type(failure.value).__name__
+        self.error_stats['http_errors'] += 1
+        shard_key = request.meta.get('shard_key')
+        page_num = request.meta.get('page_num', 1)
+        self.logger.error(f"Запрос не удался ({reason}): шард {shard_key}, страница {page_num}")
+        self._update_scrapy_stats()
+
+        if self.current_shard is None or shard_key != self.current_shard.key:
+            return  # шард уже завершён
+        if page_num == 1:
+            # без первой страницы число объявлений неизвестно — шард не собран
+            yield from self._handle_make_completion(failed=True)
+        else:
+            yield from self._handle_page_completion(ok=False)
 
     def _reset_403_counter_on_success(self):
         """Сбрасывает счетчик 403 ошибок при успешном запросе"""

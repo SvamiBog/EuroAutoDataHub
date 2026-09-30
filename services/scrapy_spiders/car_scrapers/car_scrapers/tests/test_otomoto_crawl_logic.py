@@ -264,6 +264,69 @@ class TestGraphQLErrors:
         assert event["complete"] is False
 
 
+class TestRequestErrors:
+    """Ошибки HTTP (кроме 403) и сети после повторов: страница или шард не собраны, обход идёт дальше."""
+
+    @staticmethod
+    def http_failure(spider, page, status):
+        from scrapy.spidermiddlewares.httperror import HttpError
+        from twisted.python.failure import Failure
+        response = response_for(spider, "Bad Request", page=page, status=status)
+        failure = Failure(HttpError(response, "Ignoring non-200 response"))
+        failure.request = response.request
+        return failure
+
+    @staticmethod
+    def network_failure(spider, page):
+        from twisted.internet.error import TimeoutError
+        from twisted.python.failure import Failure
+        failure = Failure(TimeoutError())
+        failure.request = response_for(spider, "", page=page).request
+        return failure
+
+    def test_requests_have_errback(self, crawler_spider):
+        request = crawler_spider._build_request(page=2, callback=crawler_spider.parse_page)
+        assert request.errback == crawler_spider._on_request_error
+
+    def test_failed_first_page_fails_shard_and_moves_on(self, crawler_spider):
+        spider = crawler_spider
+        _, [event], requests = split(list(spider._on_request_error(self.http_failure(spider, 1, 400))))
+        assert (event["shard_key"], event["complete"], event["pages_failed"]) == ("make=audi", False, 1)
+        assert requests[0].meta["shard_key"] == "make=bmw"
+        assert spider.error_stats["http_errors"] == 1
+
+    def test_failed_page_makes_shard_incomplete(self, crawler_spider):
+        spider = crawler_spider
+        list(spider.parse_initial(response_for(spider, search_body([str(i) for i in range(50)], 60))))
+        _, [event], requests = split(list(spider._on_request_error(self.network_failure(spider, 2))))
+        assert event["complete"] is False and event["pages_failed"] == 1
+        assert requests[0].meta["shard_key"] == "make=bmw"
+
+    def test_error_of_finished_shard_is_ignored(self, crawler_spider):
+        spider = crawler_spider
+        failure = self.http_failure(spider, 2, 500)
+        list(spider.parse_initial(response_for(spider, search_body(["1"], 1))))  # audi завершён
+        assert list(spider._on_request_error(failure)) == []
+        assert spider.current_shard.key == "make=bmw"
+
+    def test_consecutive_failed_shards_stop_crawl(self):
+        spider = create_spider(makes="audi,bmw,opel,fiat", MAX_CONSECUTIVE_FAILED_SHARDS=3)
+        body = {"errors": [{"message": "PersistedQueryNotFound"}]}
+        for _ in range(2):
+            list(spider.parse_initial(response_for(spider, body)))
+        with pytest.raises(CloseSpider) as exc:
+            list(spider.parse_initial(response_for(spider, body)))
+        assert exc.value.reason == "shard_failures"
+        assert spider.make_results["make=opel"]["complete"] is False
+
+    def test_successful_shard_resets_failure_counter(self):
+        spider = create_spider(makes="audi,bmw,opel,fiat", MAX_CONSECUTIVE_FAILED_SHARDS=2)
+        list(spider.parse_initial(response_for(spider, {"errors": [{"message": "PersistedQueryNotFound"}]})))
+        list(spider.parse_initial(response_for(spider, search_body(["1"], 1, make="bmw"))))
+        list(spider.parse_initial(response_for(spider, {"errors": [{"message": "PersistedQueryNotFound"}]})))
+        assert spider.current_shard.key == "make=fiat"
+
+
 class TestItemParsing:
 
     def test_build_item_fields(self, crawler_spider):
@@ -349,3 +412,14 @@ def test_closed_records_stats(crawler_spider):
     assert stats.get_value("otomoto/shards_planned") == 2
     assert stats.get_value("otomoto/shards_complete") == 1
     assert stats.get_value("otomoto/shards_not_started") == 1
+
+
+def test_run_summary_counts_filled_fields(crawler_spider):
+    spider = crawler_spider
+    nodes = [make_node("1"), make_node("2", price=None, parameters=[{"key": "make", "value": "audi"}])]
+    list(spider.parse_initial(response_for(spider, {"data": {"advertSearch": {"totalCount": 2, "edges": [
+        {"node": node} for node in nodes]}}})))
+    summary = spider.run_summary()
+    assert summary["items_parsed"] == 2 and summary["makes"] == 2
+    assert summary["fields_filled"]["make"] == 2
+    assert summary["fields_filled"]["price"] == summary["fields_filled"]["year"] == 1
