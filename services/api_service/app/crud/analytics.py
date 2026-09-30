@@ -3,6 +3,7 @@
 
 Цены — в EUR. В трендах и амортизации каждое объявление учитывается один раз за период
 (по последнему наблюдению периода), чтобы долго висящие объявления не перевешивали.
+Объявления с нарушениями качества данных (listing.quality_flags) не учитываются.
 """
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
@@ -31,9 +32,11 @@ class ListingFilter:
     year_to: Optional[int] = None
     fuel_type: Optional[str] = None
     gearbox: Optional[str] = None
+    # только объявления без нарушений качества данных (неправдоподобные цены, годы, пробег)
+    quality_ok: bool = True
 
     def conditions(self) -> list:
-        conditions = []
+        conditions = [Listing.quality_flags.is_(None)] if self.quality_ok else []
         if self.make:
             conditions.append(Listing.make_id.in_(select(VehicleMake.id).where(VehicleMake.slug == slugify(self.make))))
         if self.model:
