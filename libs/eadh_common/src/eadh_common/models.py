@@ -4,7 +4,7 @@
 в `listing`, изменения — в журнале `listing_event`. Снятие с публикации определяется только
 по полным обходам шардов (`crawl_shard`), см. data_processor/app/lifecycle.py.
 """
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from enum import Enum
 from typing import Any, Optional
@@ -20,8 +20,30 @@ BigIntPK = sa.BigInteger().with_variant(sa.Integer(), "sqlite")
 Money = sa.Numeric(14, 2)
 
 
+class UTCDateTime(sa.TypeDecorator):
+    """timestamptz, который всегда отдаёт aware-время в UTC.
+
+    SQLite (тесты) не хранит часовой пояс: пишем туда UTC и при чтении добавляем зону.
+    Время без зоны на входе считается UTC.
+    """
+
+    impl = sa.DateTime(timezone=True)
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+        value = value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+        return value.replace(tzinfo=None) if dialect.name == "sqlite" else value
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return None
+        return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+
+
 def _ts(nullable: bool = True, index: bool = False) -> sa.Column:
-    return sa.Column(sa.DateTime(timezone=True), nullable=nullable, index=index)
+    return sa.Column(UTCDateTime(), nullable=nullable, index=index)
 
 
 class ListingStatus(str, Enum):

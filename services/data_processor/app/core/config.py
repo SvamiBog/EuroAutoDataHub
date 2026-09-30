@@ -1,43 +1,51 @@
 # services/data_processor/app/core/config.py
-import os
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from typing import Optional
+
 from pydantic import Field
 
+from eadh_common.messages import TOPIC_CRAWL_EVENTS, TOPIC_DLQ, TOPIC_LISTING_OBSERVATIONS
+from eadh_common.settings import DatabaseSettings
 
-class Settings(BaseSettings):
+
+class Settings(DatabaseSettings):
     """
-    Класс для управления настройками сервиса.
-    Значения загружаются из переменных окружения или файла .env.
+    Настройки ingestor. Значения загружаются из переменных окружения или файла .env.
+    Параметры PostgreSQL (POSTGRES_*) — в DatabaseSettings.
     """
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8", 
-        extra="ignore"
-    )
 
-    # Настройки PostgreSQL
-    POSTGRES_USER: str = Field(default="postgres", validation_alias="POSTGRES_USER")
-    POSTGRES_PASSWORD: str = Field(default="password", validation_alias="POSTGRES_PASSWORD")
-    POSTGRES_SERVER: str = Field(default="localhost", validation_alias="POSTGRES_SERVER")
-    POSTGRES_PORT: str = Field(default="5432", validation_alias="POSTGRES_PORT")
-    POSTGRES_DB: str = Field(default="euroautodatahub_db", validation_alias="POSTGRES_DB")
+    # --- Kafka ---
+    KAFKA_BOOTSTRAP_SERVERS: str = Field(default="localhost:9092")
+    KAFKA_TOPIC_OBSERVATIONS: str = Field(default=TOPIC_LISTING_OBSERVATIONS)
+    KAFKA_TOPIC_CRAWL_EVENTS: str = Field(default=TOPIC_CRAWL_EVENTS)
+    KAFKA_TOPIC_DLQ: str = Field(default=TOPIC_DLQ)
+    KAFKA_CONSUMER_GROUP: str = Field(default="ingestor")
 
-    # Формируем асинхронный URL для подключения к БД
-    @property
-    def database_url(self) -> str:
-        return (f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@"
-                f"{self.POSTGRES_SERVER}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}")
+    # --- Приём сообщений ---
+    INGEST_BATCH_SIZE: int = Field(default=1000)
+    INGEST_POLL_TIMEOUT_MS: int = Field(default=1000)
+    # Максимальная пауза между попытками записи, если БД недоступна
+    DB_RETRY_MAX_DELAY_S: float = Field(default=60.0)
 
-    # Настройки Kafka
-    KAFKA_BOOTSTRAP_SERVERS: str = Field(default="localhost:9092", validation_alias="KAFKA_BOOTSTRAP_SERVERS")
-    KAFKA_TOPIC_ADS: str = Field(default="scraped_ads", validation_alias="KAFKA_TOPIC_ADS")
-    KAFKA_CONSUMER_GROUP: str = Field(default="ad-processor-group", validation_alias="KAFKA_CONSUMER_GROUP")
+    # --- Жизненный цикл объявлений ---
+    LIFECYCLE_INTERVAL_S: float = Field(default=60.0)
+    # Объявление снимается после стольких полных обходов шарда подряд, в которых его не было
+    DELIST_AFTER_MISSED_RUNS: int = Field(default=2)
+    # Предохранитель: если за один полный обход «пропало» больше этой доли активных объявлений шарда,
+    # снятие не применяется (вероятна ошибка парсера)
+    MAX_DELIST_RATIO: float = Field(default=0.3)
+    MIN_ADS_FOR_DELIST_GUARD: int = Field(default=20)
+    # Сколько ждать, пока ingestor догонит наблюдения полного шарда, прежде чем пропустить его
+    LIFECYCLE_WAIT_TIMEOUT_H: float = Field(default=6.0)
 
-    # Предохранитель status_updater: если по одному сообщению пришлось бы снять с публикации
-    # больше этой доли активных объявлений марки, снятие пропускается (вероятна ошибка обхода)
-    MAX_DELIST_RATIO: float = Field(default=0.3, validation_alias="MAX_DELIST_RATIO")
-    # Предохранитель не применяется к маркам, у которых в БД меньше стольких активных объявлений
-    MIN_ADS_FOR_DELIST_GUARD: int = Field(default=20, validation_alias="MIN_ADS_FOR_DELIST_GUARD")
+    # --- Курсы валют ЕЦБ ---
+    FX_URL: str = Field(default="https://www.ecb.europa.eu/stats/eurofxref/eurofxref-hist-90d.xml")
+    FX_REFRESH_INTERVAL_H: float = Field(default=6.0)
+
+    # --- Отчёт о прогоне ---
+    TELEGRAM_BOT_TOKEN: Optional[str] = Field(default=None)
+    TELEGRAM_CHAT_ID: Optional[str] = Field(default=None)
+    # Отчёт отправляется, когда все полные шарды запуска обработаны, но не позже этого срока
+    REPORT_WAIT_TIMEOUT_H: float = Field(default=6.0)
 
 
 # Создаем экземпляр настроек, который будет использоваться в других модулях
