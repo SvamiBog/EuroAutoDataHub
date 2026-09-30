@@ -9,6 +9,7 @@
   3: audi снова без a118, a119 — второй полный обход, снятие; bmw без b29 — первый пропуск
      (неполный день 2 не считается);
   4: a119 вернулся; audi дробится по годам (MAX_PAGES_PER_SHARD=1); b29 снимается.
+Этап 2: дневные наблюдения записаны, витрина сегментов посчитана после прогона.
 """
 import asyncio
 import json
@@ -22,7 +23,7 @@ from pathlib import Path
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from eadh_common.models import CrawlRun, CrawlShard, Listing, ListingEvent
+from eadh_common.models import CrawlRun, CrawlShard, DailyObservation, Listing, ListingEvent, SegmentDailyStats
 from eadh_common.settings import DatabaseSettings
 
 HERE = Path(__file__).resolve().parent
@@ -136,6 +137,16 @@ async def main() -> None:
 
     async with factory() as session:
         runs = (await session.execute(select(func.count()).select_from(CrawlRun).where(CrawlRun.source == SOURCE))).scalar()
+        observed = (await session.execute(
+            select(func.count()).select_from(DailyObservation)
+            .join(Listing, Listing.id == DailyObservation.listing_id).where(Listing.source == SOURCE))).scalar()
+        stats_today = (await session.execute(
+            select(func.count()).select_from(SegmentDailyStats)
+            .where(SegmentDailyStats.stat_date == func.current_date(), SegmentDailyStats.level == "country",
+                   SegmentDailyStats.country_code == "PL"))).scalar()
+    print("Этап 2:")
+    check(observed == 150, f"дневные наблюдения: {observed} (по одному на объявление за день)")
+    check(stats_today == 1, "витрина сегментов посчитана за сегодня")
     await engine.dispose()
     print(f"E2E пройден: {runs} запуска обхода")
 

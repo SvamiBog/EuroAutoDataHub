@@ -14,11 +14,12 @@
 ## Архитектура
 
 ```
-scheduler ──► Scrapy (otomoto) ──► Kafka ──► ingestor ──► PostgreSQL ──► FastAPI
- (каждый день)   │                  │ listing_observations      ▲
-                 │                  │ crawl_events              │ lifecycle: снятие по полным обходам
-                 └── run_id,        └ ingest_dlq (ошибки)       │ курсы ЕЦБ, отчёт о прогоне (Telegram)
-                     шарды
+scheduler ──► Scrapy (otomoto) ──► Kafka ──► ingestor ──► PostgreSQL ──► FastAPI (/api/v1, аналитика)
+ (каждый день)   │                  │ listing_observations      ▲     │
+                 │                  │ crawl_events              │     └──► Metabase (дашборды)
+                 └── run_id,        └ ingest_dlq (ошибки)       │
+                     шарды              lifecycle, курсы ЕЦБ, отчёт о прогоне,
+                                        дневные наблюдения, витрина сегментов
 ```
 
 | Сервис | Путь | Назначение |
@@ -26,7 +27,8 @@ scheduler ──► Scrapy (otomoto) ──► Kafka ──► ingestor ──�
 | `scheduler` | `services/scrapy_spiders/car_scrapers` | Ежедневно в `CRAWL_AT` запускает обходы |
 | `scrapy_runner` | `services/scrapy_spiders/car_scrapers` | Паук otomoto (GraphQL API) для ручного запуска. Публикует наблюдения объявлений и события обхода (`run_started`, `shard_finished`, `run_finished`) |
 | `ingestor` | `services/data_processor` | Пишет наблюдения и события в БД батчами. Ведёт журнал изменений объявлений и снимает объявления с публикации только по полным обходам. Загружает курсы ЕЦБ и строит отчёт о прогоне |
-| `api_service` | `services/api_service` | FastAPI: объявления, журнал изменений, статистика в EUR; миграции Alembic |
+| `api_service` | `services/api_service` | FastAPI: объявления, журнал изменений, статистика и аналитика в EUR; миграции Alembic |
+| `metabase` | `bi/metabase` | Дашборды «Рынок», «Сегмент», «Объявление», «Здоровье сбора» (профиль `bi`, дашборды как код) |
 | `eadh_common` | `libs/eadh_common` | Общая модель данных, контракт сообщений Kafka, настройки БД |
 
 Главные правила данных:
@@ -51,6 +53,31 @@ make run-oto MAKES=audi,bmw   # разовый обход выбранных м�
 - Логи: `make logs-ingestor`, `make logs-scheduler`, `make logs-api`
 - Отчёт о последнем прогоне: таблица `crawl_run`, поле `report`
 
+## Аналитика
+
+**Дашборды (Metabase).** Задайте `MB_ADMIN_*` в `.env` и выполните:
+
+```bash
+make bi-up          # Metabase на http://localhost:3000
+make bi-provision   # подключение к БД, вопросы и дашборды (повторный запуск обновляет их)
+```
+
+**API** (`/api/v1/analytics`, ключ в заголовке `X-API-Key`, если заданы `API_KEYS`):
+
+| Эндпоинт | Что возвращает |
+|----------|----------------|
+| `/price-trend` | Медиана и квартили цены (EUR) по дням, неделям или месяцам и странам. Фильтры: марка, модель, годы, пробег, топливо, КПП |
+| `/segments`, `/segments/timeseries` | Витрина сегментов: предложение (активные, новые, снятые), цены, срок экспозиции |
+| `/depreciation` | Цена по возрасту автомобиля |
+| `/delisted` | Снятые за период: срок экспозиции, доля со снижением цены, медианная скидка |
+
+Пример: медиана Toyota Corolla 2019–2021 с пробегом 50–100 тыс. км в PL и DE по неделям:
+`/api/v1/analytics/price-trend?make=toyota&model=corolla&year_from=2019&year_to=2021&mileage_from=50000&mileage_to=100000&country=PL&country=DE`
+
+Витрина пересчитывается после каждого прогона. Пересчёт за период: `make stats-backfill FROM=2026-09-01 TO=2026-09-30`.
+
+![Дашборд «Сегмент» (демо-данные)](docs/images/metabase_segment.png)
+
 ## Локальная разработка
 
 Нужен [uv](https://docs.astral.sh/uv/). Python 3.11 он установит сам.
@@ -60,6 +87,9 @@ uv sync                          # зависимости всех сервис�
 make test                        # тесты всех сервисов
 make lint                        # минимальный линт
 make e2e                         # сквозной сценарий на запущенном стеке (make dc-up)
+
+# тесты на настоящем PostgreSQL (витрины, аналитика): создают и удаляют временные БД
+TEST_DATABASE_URL=postgresql+asyncpg://postgres:пароль@localhost:5433/postgres make test
 
 set -a; source .env; set +a      # переменные окружения для локальных запусков
 make run-oto-local MAKES=audi    # паук с хоста (Kafka на localhost:9094)
@@ -86,3 +116,5 @@ make api-dev                     # API с автоперезагрузкой
 | `DELIST_AFTER_MISSED_RUNS` | 2 | Сколько полных обходов подряд без объявления нужно для снятия |
 | `MAX_DELIST_RATIO` | 0.3 | Предохранитель: не снимать, если «пропало» больше этой доли шарда |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | — | Отправка отчёта о прогоне в Telegram |
+| `API_KEYS` | — | Ключи доступа к `/api/v1` через запятую; пусто — доступ без ключа |
+| `MB_ADMIN_EMAIL`, `MB_ADMIN_PASSWORD` | — | Администратор Metabase для `make bi-provision` |
