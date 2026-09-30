@@ -106,8 +106,10 @@ async def ingest_observations(session: AsyncSession, observations: Iterable[List
             stats.new += 1
             continue
 
-        if obs.observed_at < listing.last_seen_at:
-            stats.stale += 1  # наблюдение старше учтённого: пришло с опозданием или повторно
+        if obs.observed_at <= listing.last_seen_at:
+            # наблюдение не новее учтённого: пришло с опозданием или обрабатывается повторно
+            # (иначе повтор последнего наблюдения снятого объявления «вернул» бы его в продажу)
+            stats.stale += 1
             continue
 
         if not _same_amount(listing.price, obs.price) or (obs.price is not None and listing.currency != obs.currency):

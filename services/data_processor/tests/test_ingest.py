@@ -59,9 +59,26 @@ def test_new_listing_is_created_with_normalization_and_eur(run, session_factory,
 def test_replay_is_idempotent(run, session_factory, fx):
     ingest(run, session_factory, fx, [obs()])
     stats = ingest(run, session_factory, fx, [obs()])
-    assert (stats.new, stats.updated) == (0, 1)
+    assert (stats.new, stats.updated, stats.stale) == (0, 0, 1)
     assert event_types(run, session_factory) == ["new"]
     assert len(fetch(run, session_factory, Listing)) == 1
+
+
+def test_replay_of_last_observation_does_not_relist(run, session_factory, fx):
+    """Повторное чтение топика не должно возвращать снятые объявления в продажу."""
+    ingest(run, session_factory, fx, [obs()])
+
+    async def delist():
+        async with session_factory() as session:
+            listing = (await session.execute(select(Listing))).scalar_one()
+            listing.status, listing.delisted_at = "delisted", T0 + timedelta(days=3)
+            await session.commit()
+    run(delist())
+
+    ingest(run, session_factory, fx, [obs()])  # то же наблюдение ещё раз
+    [listing] = fetch(run, session_factory, Listing)
+    assert listing.status == "delisted"
+    assert event_types(run, session_factory) == ["new"]
 
 
 def test_price_and_mileage_changes_are_logged(run, session_factory, fx):
