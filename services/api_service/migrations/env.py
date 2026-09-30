@@ -19,7 +19,7 @@ config = context.config
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 
 # URL для миграций берётся из окружения (POSTGRES_* или SYNC_DATABASE_URL), а не из alembic.ini.
@@ -28,8 +28,9 @@ config.set_main_option("sqlalchemy.url", DatabaseSettings().sync_database_url.re
 
 
 def include_object(obj, name, type_, reflected, compare_to):
-    """Таблицы legacy_* (данные до модели v2) хранятся для отката и в модели не описаны."""
-    if type_ == "table" and name.startswith("legacy_"):
+    """Таблицы legacy_* (данные до модели v2) хранятся для отката, а партиции listing_observation_YYYY_MM
+    создаются по мере надобности — в модели они не описаны."""
+    if type_ == "table" and (name.startswith("legacy_") or name.startswith("listing_observation_")):
         return False
     return True
 

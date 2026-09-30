@@ -10,6 +10,7 @@ import pytest
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine  # noqa: E402
+from sqlalchemy.pool import NullPool  # noqa: E402
 from sqlmodel import SQLModel  # noqa: E402
 
 import eadh_common.models  # noqa: E402,F401  (регистрирует таблицы в SQLModel.metadata)
@@ -73,3 +74,25 @@ def shard_finished(run_id="run-1", make="audi", started=T0, finished=None, colle
 def run_finished(run_id="run-1", at=T0 + timedelta(hours=1), reason="finished"):
     return RunFinished(run_id=run_id, source="otomoto.pl", finished_at=at, finish_reason=reason,
                        stats={"otomoto/forbidden_403": 0})
+
+
+# --- Тесты на настоящем PostgreSQL (маркер pg, нужен TEST_DATABASE_URL) ---
+
+@pytest.fixture(scope="session")
+def pg_url():
+    from eadh_common.testing import get_test_database_url, migrated_database
+    if not get_test_database_url():
+        pytest.skip("TEST_DATABASE_URL не задан")
+    with migrated_database() as url:
+        yield url
+
+
+@pytest.fixture
+def pg_session_factory(pg_url, run):
+    """Фабрика сессий к временной БД PostgreSQL с миграциями; таблицы очищаются перед тестом."""
+    from eadh_common.testing import truncate_all
+    truncate_all(pg_url)
+    # каждый asyncio.run — новый event loop, поэтому соединения не переиспользуем
+    engine = create_async_engine(pg_url, poolclass=NullPool)
+    yield async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    run(engine.dispose())
