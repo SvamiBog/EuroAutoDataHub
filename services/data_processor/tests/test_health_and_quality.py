@@ -69,6 +69,18 @@ class TestRunRules:
         assert found == {"blocking_403": "warning", "api_errors": "warning"}
         assert api_failures(stats) == {"graphql": 1, "http": 2, "json": 0, "no_data": 0}
 
+    def test_proxy_bans(self):
+        stats = {"items_parsed": 1000, "proxies": 3, "proxy_bans": 7, "proxy_errors": 1, "proxy_cooldowns": 2,
+                 "proxies_cooling": 1, "proxy_stats": {"10.0.0.1:8080": {"cooldowns": 2}, "10.0.0.2:8080": {}}}
+        [finding] = run_findings(report(spider_stats=stats), [], CONFIG, DAY)
+        assert (finding.rule, finding.severity.value) == ("proxy_bans", "warning")
+        assert "2 раз (10.0.0.1:8080)" in finding.message and "на паузе к концу обхода 1 из 3" in finding.message
+        stats["proxies_cooling"] = 3
+        [finding] = run_findings(report(spider_stats=stats), [], CONFIG, DAY)
+        assert finding.severity.value == "critical" and "заблокированы все прокси" in finding.message
+        healthy = {"items_parsed": 1000, "proxies": 3, "proxy_cooldowns": 0, "proxies_cooling": 0}
+        assert run_findings(report(spider_stats=healthy), [], CONFIG, DAY) == []
+
     def test_field_fill_drop(self):
         history = [report(fill_rates={"price": 0.99, "year": 0.99})]
         [finding] = run_findings(report(fill_rates={"price": 0.1, "year": 0.98}), history, CONFIG, DAY)

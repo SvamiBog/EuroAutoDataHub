@@ -117,6 +117,20 @@ def run_findings(report: dict, history: list[dict], config, day: date) -> list[F
                                  f"ответов 403: {forbidden}, пауз из-за блокировки: {pauses}", day,
                                  score=forbidden, forbidden_403=forbidden, pauses=pauses))
 
+    proxies = int(stats.get("proxies") or 0)
+    cooldowns, cooling = int(stats.get("proxy_cooldowns") or 0), int(stats.get("proxies_cooling") or 0)
+    if proxies and (cooldowns or cooling):
+        banned = [name for name, s in (stats.get("proxy_stats") or {}).items() if s.get("cooldowns")]
+        names = ", ".join(banned[:5]) + (" …" if len(banned) > 5 else "")
+        findings.append(_finding(
+            report, "proxy_bans", CRITICAL if cooling >= proxies else WARNING,
+            f"прокси уходили на паузу из-за банов или ошибок соединения: {cooldowns} раз"
+            + (f" ({names})" if names else "")
+            + f"; ответов 403/429 через прокси {int(stats.get('proxy_bans') or 0)}, ошибок соединения "
+              f"{int(stats.get('proxy_errors') or 0)}; на паузе к концу обхода {cooling} из {proxies}"
+            + (" — заблокированы все прокси" if cooling >= proxies else ""),
+            day, score=cooling / proxies, proxies=proxies, cooling=cooling, cooldowns=cooldowns, banned=banned))
+
     failures = api_failures(stats)
     failed_shards = report.get("failed_shards", 0)
     if failed_shards and failed_shards >= max(1, shards / 2) and sum(failures.values()):

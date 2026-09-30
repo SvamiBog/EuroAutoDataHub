@@ -16,6 +16,10 @@
   6: неверный хэш persisted query — площадка отвечает ошибкой GraphQL: алерт в отчёте того же прогона,
      статусы объявлений не меняются;
   7: площадка отвечает HTTP 400 — паук останавливается после первого шарда (shard_failures).
+Прокси:
+  8: обход через три прокси, один из которых забанен (403): запрос повторяется через другой прокси,
+     забаненный уходит на паузу, остальные запросы распределяются по двум рабочим; обход полный,
+     в отчёте — предупреждение о бане прокси.
 """
 import asyncio
 import json
@@ -67,6 +71,7 @@ DAYS += [
     {"catalog": DAY5_CATALOG},
     {"catalog": DAY5_CATALOG, "broken": "graphql"},
     {"catalog": DAY5_CATALOG, "broken": "http400", "settings": {"MAX_CONSECUTIVE_FAILED_SHARDS": 1}},
+    {"catalog": DAY5_CATALOG, "proxies": [{"banned": True}, {}, {}], "settings": {"PROXY_BAN_THRESHOLD": 1}},
 ]
 
 
@@ -202,6 +207,20 @@ async def main() -> None:
         if day in (6, 7):
             active = sum(1 for status, _ in states.values() if status == "active")
             check(active == active_before_broken, f"сломанный обход не снимает объявления: активных {active}")
+        if day == 8:
+            print("Прокси:")
+            banned, *healthy = result["proxy_requests"]
+            check(all(result["shards"].values()), f"обход через прокси полный: {result['shards']}")
+            check(result["site_requests"] == 0, "напрямую к площадке запросов не было")
+            check(banned == 1 and all(n > 0 for n in healthy),
+                  f"забаненный прокси получил 1 запрос и ушёл на паузу, рабочие — {healthy}")
+            stats = report["spider_stats"]
+            check((stats["proxies"], stats["proxy_bans"], stats["proxy_cooldowns"]) == (3, 1, 1),
+                  "статистика прокси в итогах запуска")
+            rules = {a["rule"]: a["severity"] for a in report["anomalies"]}
+            check(rules.get("proxy_bans") == "warning", f"предупреждение о бане прокси в отчёте ({sorted(rules)})")
+            active = sum(1 for status, _ in states.values() if status == "active")
+            check(active == active_before_broken, f"статусы объявлений не изменились: активных {active}")
 
     async with factory() as session:
         runs = (await session.execute(select(func.count()).select_from(CrawlRun).where(CrawlRun.source == SOURCE))).scalar()

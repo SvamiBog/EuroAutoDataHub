@@ -798,7 +798,10 @@ class OtomotoSpider(scrapy.Spider):
     def run_summary(self) -> dict:
         """Итоги запуска для события run_finished и отчета"""
         complete = sum(1 for r in self.make_results.values() if r['complete'])
+        # статистика прокси (car_scrapers/proxy.py), если запросы шли через пул прокси
+        proxy_pool = getattr(self, 'proxy_pool', None)
         return {
+            **(proxy_pool.summary() if proxy_pool is not None else {}),
             'shards_planned': self.shards_planned,
             'shards_done': len(self.make_results),
             'shards_complete': complete,
@@ -864,6 +867,9 @@ class OtomotoSpider(scrapy.Spider):
         table.add_row("Повторы GraphQL", str(self.error_stats['graphql_retries']), "")
         table.add_row("Ошибки JSON", str(self.error_stats['json_decode_errors']), "")
         table.add_row("Ошибки HTTP и сети", str(self.error_stats['http_errors']), "")
+        if summary.get('proxies'):
+            table.add_row("Прокси", str(summary['proxies']), "")
+            table.add_row("Баны прокси / паузы", f"{summary['proxy_bans']} / {summary['proxy_cooldowns']}", "")
 
         if self.progress_enabled:
             self.console.print()  # Пустая строка
@@ -881,6 +887,10 @@ class OtomotoSpider(scrapy.Spider):
         self.logger.info(f"Время работы: {time.strftime('%H:%M:%S', time.gmtime(total_time))}")
         self.logger.info(f"Ошибки: 403={self.error_stats['forbidden_403']} (пауз: {self.pause_count}), "
                          f"GraphQL={self.error_stats['graphql_errors']}, HTTP={self.error_stats['http_errors']}")
+        if summary.get('proxies'):
+            self.logger.info(f"Прокси: {summary['proxies']}, запросов {summary['proxy_requests']}, "
+                             f"банов {summary['proxy_bans']}, ошибок {summary['proxy_errors']}, "
+                             f"пауз {summary['proxy_cooldowns']}, на паузе сейчас {summary['proxies_cooling']}")
 
 
     def _handle_403_error(self, response, context="unknown", is_initial=False):

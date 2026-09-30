@@ -67,6 +67,8 @@ TELNETCONSOLE_ENABLED = False
 # See https://docs.scrapy.org/en/latest/topics/downloader-middleware.html
 DOWNLOADER_MIDDLEWARES = {
     "car_scrapers.middlewares.CarScrapersDownloaderMiddleware": 543,
+    # ротация прокси: до HttpProxyMiddleware (750); без списка прокси отключается сама
+    "car_scrapers.proxy.ProxyRotationMiddleware": 610,
 }
 
 # Enable or disable extensions
@@ -104,6 +106,25 @@ MAX_PAGES_PER_SHARD = int(os.getenv("SCRAPY_MAX_PAGES_PER_SHARD", "500"))
 # Если столько шардов подряд не удалось начать (ошибка API, HTTP, блокировка), обход останавливается
 # с причиной shard_failures: вероятно, площадка изменила API. 0 — не останавливать
 MAX_CONSECUTIVE_FAILED_SHARDS = int(os.getenv("SCRAPY_MAX_CONSECUTIVE_FAILED_SHARDS", "5"))
+
+# --- Прокси (car_scrapers/proxy.py) ---
+# Запросы распределяются по прокси; у каждого свой download slot, поэтому CONCURRENT_REQUESTS_PER_DOMAIN,
+# DOWNLOAD_DELAY и AutoThrottle ограничивают нагрузку на каждый IP. Общий предел — CONCURRENT_REQUESTS.
+# SCRAPY_PROXIES: http://user:pass@host:port через запятую, пробел или перенос строки; direct — свой IP.
+PROXIES = os.getenv("SCRAPY_PROXIES", "").replace(",", " ").split()
+# Файл со списком прокси (по одному в строке, # — комментарий)
+PROXY_FILE = os.getenv("SCRAPY_PROXY_FILE", "")
+# Ответы, которые считаются баном IP: запрос повторяется через другой прокси
+PROXY_BAN_CODES = [int(c) for c in os.getenv("SCRAPY_PROXY_BAN_CODES", "403,429").split(",") if c.strip()]
+# После стольких банов или ошибок соединения подряд прокси уходит на паузу PROXY_COOLDOWN секунд;
+# каждая следующая пауза подряд вдвое длиннее, но не больше PROXY_COOLDOWN_MAX
+PROXY_BAN_THRESHOLD = int(os.getenv("SCRAPY_PROXY_BAN_THRESHOLD", "2"))
+PROXY_COOLDOWN = float(os.getenv("SCRAPY_PROXY_COOLDOWN", "600"))
+PROXY_COOLDOWN_MAX = float(os.getenv("SCRAPY_PROXY_COOLDOWN_MAX", "3600"))
+# Сколько раз повторить запрос через другие прокси после бана или ошибки соединения
+PROXY_MAX_RETRIES = int(os.getenv("SCRAPY_PROXY_MAX_RETRIES", "3"))
+# Свой User-Agent у каждого прокси (из USER_AGENTS)
+PROXY_USER_AGENT_PER_PROXY = os.getenv("SCRAPY_PROXY_USER_AGENT_PER_PROXY", "true").lower() == "true"
 
 # Сырые ответы площадки (gzip) для переразбора и отладки; пусто — не сохранять
 RAW_RESPONSES_DIR = os.getenv("SCRAPY_RAW_RESPONSES_DIR", "")

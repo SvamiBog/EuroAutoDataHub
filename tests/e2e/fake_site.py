@@ -2,7 +2,10 @@
 блокировки по марке, фильтры марки и диапазона лет, пагинация по 50.
 
 broken: "graphql" — ответ на запрос с неизвестным хэшем persisted query (как у настоящего API после его смены),
-"http400" — ошибка HTTP 400 на любой запрос."""
+"http400" — ошибка HTTP 400 на любой запрос, "banned" — 403 на любой запрос (заблокированный IP).
+
+Сервер работает и как HTTP-прокси: запрос через прокси приходит с абсолютным URL в строке запроса.
+Число обработанных запросов — в атрибуте requests сервера."""
 import json
 import threading
 import urllib.parse as up
@@ -24,6 +27,10 @@ def make_handler(catalog, blocked_makes, broken=None):
             self.wfile.write(json.dumps(body).encode())
 
         def do_GET(self):
+            with self.server.lock:
+                self.server.requests += 1
+            if broken == "banned":
+                return self.reply(403, {"error": "forbidden"})
             if broken == "http400":
                 return self.reply(400, {"error": "bad request"})
             if broken == "graphql":
@@ -55,5 +62,6 @@ def make_handler(catalog, blocked_makes, broken=None):
 
 def serve(catalog, blocked_makes=(), broken=None):
     srv = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(catalog, set(blocked_makes), broken))
+    srv.requests, srv.lock = 0, threading.Lock()
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     return srv
