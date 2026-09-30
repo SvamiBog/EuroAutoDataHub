@@ -94,6 +94,7 @@ status:
 
 # Тесты: у сервисов одинаковое имя пакета `app`, поэтому каждый сервис тестируется отдельным процессом
 define run_tests
+	cd libs/eadh_common && uv run pytest tests $(1)
 	cd $(SCRAPY_DIR) && uv run pytest car_scrapers/tests $(1)
 	cd services/data_processor && uv run pytest tests $(1)
 	cd services/api_service && uv run pytest tests $(1)
@@ -126,7 +127,7 @@ test-verbose:
 
 # Минимальный линт: синтаксические ошибки и неопределенные имена
 lint:
-	uv run ruff check --select E9,F63,F7,F82 services scripts
+	uv run ruff check --select E9,F63,F7,F82 services scripts libs
 
 
 # Помощь
