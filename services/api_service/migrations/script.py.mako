@@ -10,6 +10,7 @@ from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
 import sqlmodel
+import eadh_common.models  # noqa: F401  (пользовательские типы, например UTCDateTime)
 ${imports if imports else ""}
 
 # revision identifiers, used by Alembic.

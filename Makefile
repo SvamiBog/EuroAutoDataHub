@@ -83,9 +83,9 @@ db-upgrade:
 db-revision:
 	$(DC) run --rm api_migrations alembic revision --autogenerate -m "$(msg)"
 
-# Заполнить справочник марок (car_make) из справочника паука
+# Заполнить справочник марок (vehicle_make) из справочника паука
 db-seed-makes:
-	PYTHONPATH=. uv run python scripts/populate_car_makes.py
+	cd services/data_processor && uv run python -m app.seed_makes ../scrapy_spiders/car_scrapers/car_scrapers/data/otomoto_makes.json
 
 # Проверка статуса сервисов
 status:
@@ -127,7 +127,7 @@ test-verbose:
 
 # Минимальный линт: синтаксические ошибки и неопределенные имена
 lint:
-	uv run ruff check --select E9,F63,F7,F82 services scripts libs
+	uv run ruff check --select E9,F63,F7,F82 services libs
 
 
 # Помощь

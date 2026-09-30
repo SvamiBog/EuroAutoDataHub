@@ -104,3 +104,27 @@ def test_report_warns_about_incomplete_crawl(run, session_factory, fx):
     [report], _ = run_crawl_and_report(run, session_factory, fx, Settings(), complete=False, collected=1)
     assert any("неполных шардов: 1" in w for w in report["warnings"])
     assert any("полнота 50.0%" in w for w in report["warnings"])
+
+
+def test_seed_makes_is_idempotent(run, session_factory, tmp_path):
+    import json as _json
+    from eadh_common.models import MakeAlias, VehicleMake
+    from app.seed_makes import load_makes, seed_makes
+
+    path = tmp_path / "makes.json"
+    path.write_text(_json.dumps([{"name": "filter_enum_make", "value": v} for v in ("audi", "land-rover", "audi")]
+                                + [{"name": "other", "value": "x"}]))
+    makes = load_makes(path)
+    assert makes == ["audi", "land-rover"]
+
+    async def go():
+        for _ in range(2):
+            async with session_factory() as session:
+                await seed_makes(session, makes, "otomoto.pl")
+                await session.commit()
+        async with session_factory() as session:
+            slugs = sorted((await session.execute(select(VehicleMake.slug))).scalars())
+            aliases = len((await session.execute(select(MakeAlias))).scalars().all())
+        return slugs, aliases
+
+    assert run(go()) == (["audi", "land-rover"], 2)
