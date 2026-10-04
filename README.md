@@ -44,7 +44,12 @@ scheduler ──► Scrapy (4 площадки) ──► Kafka ──► ingest
 
 ## Быстрый старт (Docker)
 
-Нужны Docker и Docker Compose v2.
+Нужны Docker с Compose v2, git и make; Python и uv нужны только для разработки и `make probe`.
+- **Windows:** Docker Desktop с WSL 2. Команды выполняются в терминале Ubuntu (WSL), репозиторий клонируется
+  в домашнюю папку WSL, а не на диск `C:`.
+- **Память:** выделите Docker 4 ГБ. В простое стек с Metabase занимает около 1,5 ГБ; во время обхода и
+  работы с дашбордами — больше.
+- **Порты:** 5433 (PostgreSQL), 9094 (Kafka), 8000 (API), 3000 (Metabase).
 
 ```bash
 cp .env.example .env          # задайте пароль PostgreSQL, при желании TELEGRAM_*

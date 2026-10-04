@@ -83,7 +83,7 @@ api-dev:
 	cd services/api_service && uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 api-test:
-	curl -X GET "http://localhost:8000/health" -H "accept: application/json"
+	curl -sL "http://localhost:8000/health" -H "accept: application/json"
 
 api-docs:
 	@echo "API Documentation available at: http://localhost:8000/docs"
@@ -96,9 +96,10 @@ db-upgrade:
 db-revision:
 	$(DC) run --rm api_migrations alembic revision --autogenerate -m "$(msg)"
 
-# Заполнить справочник марок (vehicle_make) из справочника паука
+# Заполнить справочник марок (vehicle_make) из справочника паука; запускается в контейнере ingestor (после dc-up)
 db-seed-makes:
-	cd services/data_processor && uv run python -m app.seed_makes ../scrapy_spiders/car_scrapers/car_scrapers/data/otomoto_makes.json
+	$(DC) run --rm --no-deps -v "$(CURDIR)/$(SCRAPY_DIR)/car_scrapers/data:/data:ro" ingestor \
+		python -m app.seed_makes /data/otomoto_makes.json
 
 # Проверка статуса сервисов
 status:
@@ -143,9 +144,11 @@ test-verbose:
 bi-up:
 	$(DC) --profile bi up -d metabase
 
+# Скрипт запускается в контейнере ingestor (в нём есть httpx), поэтому на хосте нужен только Docker.
 # Metabase видит PostgreSQL по имени сервиса db_postgres внутри сети docker-compose
 bi-provision:
-	set -a; . ./.env; set +a; MB_DB_HOST=db_postgres MB_DB_PORT=5432 uv run python bi/metabase/provision.py
+	$(DC) run --rm --no-deps -v "$(CURDIR)/bi/metabase:/bi:ro" -e MB_URL=http://metabase:3000 \
+		-e MB_PUBLIC_URL=http://localhost:3000 -e MB_DB_HOST=db_postgres -e MB_DB_PORT=5432 ingestor python /bi/provision.py
 
 # Пересчёт витрины за период: make stats-backfill FROM=2026-09-01 TO=2026-09-30
 stats-backfill:

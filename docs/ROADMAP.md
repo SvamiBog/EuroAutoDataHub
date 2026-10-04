@@ -295,3 +295,4 @@ gantt
 | 2026-09-30 | 4.2–4.4 | Базовый класс паука `ShardedSpider`; пауки autovit.ro, standvirtual.com, AutoScout24 (8 стран); шарды со страной и ценой в lifecycle; `make probe` |
 | 2026-09-30 | 4.6 | Дубли объявлений между площадками (`listing_duplicate`) исключаются из витрины, аналитики и справедливой цены |
 | 2026-09-30 | — | `make e2e`: 10 «дней», дни 9–10 — AutoScout24 с дроблением по годам и цене. Тестов: 317 (пакет 16, паук 143, ingestor 98, API 34, дашборды 26) + e2e |
+| 2026-10-04 | — | Запуск в Docker с нуля проверен: сборка, `make dc-up`, `make e2e` на стеке, `make run-oto`, Metabase. `make db-seed-makes` не читал `.env` и падал — теперь он и `make bi-provision` запускаются в контейнере, на хосте нужны только Docker, git и make |

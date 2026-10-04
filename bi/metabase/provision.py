@@ -6,6 +6,7 @@
 
 Переменные окружения:
   MB_URL                  адрес Metabase (по умолчанию http://localhost:3000)
+  MB_PUBLIC_URL           адрес Metabase в браузере для ссылок в выводе (по умолчанию MB_URL)
   MB_ADMIN_EMAIL, MB_ADMIN_PASSWORD   администратор (создаётся при первом запуске Metabase)
   MB_DB_HOST, MB_DB_PORT  адрес PostgreSQL, как его видит Metabase (в docker-compose: db_postgres:5432)
   POSTGRES_DB, POSTGRES_USER, POSTGRES_PASSWORD   база данных проекта
@@ -28,8 +29,9 @@ VARIABLE_RE = re.compile(r"\{\{\s*(\w+)\s*\}\}")
 
 
 class Metabase:
-    def __init__(self, url: str):
+    def __init__(self, url: str, public_url: str | None = None):
         self.client = httpx.Client(base_url=url.rstrip("/"), timeout=60)
+        self.public_url = (public_url or url).rstrip("/")
 
     def request(self, method: str, path: str, **kwargs):
         response = self.client.request(method, path, **kwargs)
@@ -165,12 +167,12 @@ def ensure_dashboards(mb: Metabase, collection_id: int, cards: dict[str, dict]) 
         mb.request("PUT", f"/api/dashboard/{dashboard_id}", json={
             "description": spec["description"], "parameters": parameters, "dashcards": dashcards, "tabs": []})
         ids.append(dashboard_id)
-        print(f"Metabase: дашборд «{spec['name']}» ({len(dashcards)} карточек) — {mb.client.base_url}/dashboard/{dashboard_id}")
+        print(f"Metabase: дашборд «{spec['name']}» ({len(dashcards)} карточек) — {mb.public_url}/dashboard/{dashboard_id}")
     return ids
 
 
 def main() -> None:
-    mb = Metabase(os.getenv("MB_URL", "http://localhost:3000"))
+    mb = Metabase(os.getenv("MB_URL", "http://localhost:3000"), os.getenv("MB_PUBLIC_URL"))
     mb.wait_ready()
     database = database_payload()
     mb.login(os.getenv("MB_ADMIN_EMAIL", "admin@example.com"), os.environ["MB_ADMIN_PASSWORD"], database)
