@@ -83,7 +83,7 @@ api-dev:
 	cd services/api_service && uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 api-test:
-	curl -X GET "http://localhost:8000/health" -H "accept: application/json"
+	curl -sL "http://localhost:8000/health" -H "accept: application/json"
 
 api-docs:
 	@echo "API Documentation available at: http://localhost:8000/docs"
@@ -96,9 +96,10 @@ db-upgrade:
 db-revision:
 	$(DC) run --rm api_migrations alembic revision --autogenerate -m "$(msg)"
 
-# Заполнить справочник марок (vehicle_make) из справочника паука
+# Заполнить справочник марок (vehicle_make) из справочника паука; запускается в контейнере ingestor (после dc-up)
 db-seed-makes:
-	cd services/data_processor && uv run python -m app.seed_makes ../scrapy_spiders/car_scrapers/car_scrapers/data/otomoto_makes.json
+	$(DC) run --rm --no-deps -v "$(CURDIR)/$(SCRAPY_DIR)/car_scrapers/data:/data:ro" ingestor \
+		python -m app.seed_makes /data/otomoto_makes.json
 
 # Проверка статуса сервисов
 status:
@@ -114,7 +115,8 @@ define run_tests
 	cd services/api_service && uv run pytest tests $(1)
 endef
 
-.PHONY: test test-warnings test-strict test-coverage test-quiet test-verbose lint e2e probe run-spider
+.PHONY: test test-warnings test-strict test-coverage test-quiet test-verbose lint e2e probe run-spider \
+	ml-train ml-status ml-refresh ml-benchmark
 test:
 	@echo "--- 🚀 Запуск всех тестов через pytest ---"
 	$(call run_tests,-v)
@@ -143,13 +145,32 @@ test-verbose:
 bi-up:
 	$(DC) --profile bi up -d metabase
 
+# Скрипт запускается в контейнере ingestor (в нём есть httpx), поэтому на хосте нужен только Docker.
 # Metabase видит PostgreSQL по имени сервиса db_postgres внутри сети docker-compose
 bi-provision:
-	set -a; . ./.env; set +a; MB_DB_HOST=db_postgres MB_DB_PORT=5432 uv run python bi/metabase/provision.py
+	$(DC) run --rm --no-deps -v "$(CURDIR)/bi/metabase:/bi:ro" -e MB_URL=http://metabase:3000 \
+		-e MB_PUBLIC_URL=http://localhost:3000 -e MB_DB_HOST=db_postgres -e MB_DB_PORT=5432 ingestor python /bi/provision.py
 
 # Пересчёт витрины за период: make stats-backfill FROM=2026-09-01 TO=2026-09-30
 stats-backfill:
 	$(DC) exec ingestor python -m app.aggregates --from $(FROM) --to $(TO)
+
+# ML (этап 5, docs/ML.md): модели справедливой цены и срока до снятия в контейнере ingestor
+# make ml-train [KIND=price|dom|all] — обучить сейчас; make ml-status — версии и метрики
+KIND ?= all
+ml-train:
+	$(DC) exec ingestor python -m app.ml train $(KIND)
+
+ml-status:
+	$(DC) exec ingestor python -m app.ml status
+
+# Пересчитать справедливые цены, прогноз срока и арбитраж по активной модели
+ml-refresh:
+	$(DC) exec ingestor python -m app.ml refresh
+
+# Сравнение v1 и модели на синтетическом рынке (без БД)
+ml-benchmark:
+	$(DC) exec ingestor python -m app.ml benchmark
 
 # Сквозная проверка паук -> Kafka -> ingestor -> PostgreSQL на запущенном стеке (make dc-up)
 e2e:
@@ -195,6 +216,12 @@ help:
 	@echo "  bi-up              - Запуск Metabase (http://localhost:3000)"
 	@echo "  bi-provision       - Создать/обновить дашборды Metabase"
 	@echo "  stats-backfill     - Пересчёт витрины сегментов (FROM=… TO=…)"
+	@echo ""
+	@echo "ML (docs/ML.md):"
+	@echo "  ml-train           - Обучить модели сейчас (KIND=price|dom|all)"
+	@echo "  ml-status          - Версии моделей и метрики"
+	@echo "  ml-refresh         - Пересчитать справедливые цены, прогноз срока и арбитраж"
+	@echo "  ml-benchmark       - v1 против модели на синтетическом рынке"
 	@echo ""
 	@echo "Тестирование:"
 	@echo "  test               - Запуск всех тестов"

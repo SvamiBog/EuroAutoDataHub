@@ -12,6 +12,7 @@ from eadh_common.models import Listing
 
 from app.core.config import settings
 from app.crud import anomalies as anomalies_crud
+from app.crud import ml as ml_crud
 from app.crud.ads import (
     SORTABLE_FIELDS,
     get_listing,
@@ -31,6 +32,7 @@ from app.schemas.ads import (
     ListingResponse,
 )
 from app.schemas.anomalies import AnomalyResponse, DuplicateResponse, PriceEstimateResponse
+from app.schemas.ml import ArbitrageItem, DomForecastResponse
 
 router = APIRouter()
 
@@ -104,6 +106,10 @@ async def _detail(session: AsyncSession, listing: Optional[Listing]) -> ListingD
     detail.anomalies = [AnomalyResponse.model_validate(a) for a in await anomalies_crud.listing_anomalies(session, listing.id)]
     detail.duplicates = [DuplicateResponse.model_validate(d)
                          for d in await anomalies_crud.listing_duplicates(session, listing.id)]
+    forecast = await ml_crud.get_dom_forecast(session, listing.id)
+    if forecast is not None:
+        detail.dom_forecast = DomForecastResponse.model_validate(forecast)
+    detail.arbitrage = [ArbitrageItem.model_validate(a) for a in await ml_crud.listing_arbitrage(session, listing.id)]
     return detail
 
 

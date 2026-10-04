@@ -4,7 +4,8 @@
 1. флаги качества и дубли активных объявлений (только для последнего дня — это снимок текущего состояния);
 2. витрина сегментов за D (PostgreSQL) — её считает вызывающий, между шагами 1 и 3;
 3. поведенческие и рыночные аномалии за D;
-4. справедливые цены, ценовые аномалии и дайджесты «ниже рынка» (только для последнего дня);
+4. только для последнего дня: переобучение ML-моделей, если пора (раз в ML_RETRAIN_DAYS); справедливые цены
+   и ценовые аномалии; прогноз срока до снятия; арбитраж; дайджесты «ниже рынка»;
 5. сводка новых аномалий в Telegram.
 """
 import logging
@@ -24,6 +25,7 @@ from app.anomalies.prices import detect_price_anomalies
 from app.anomalies.quality import QualityRules, refresh_quality_flags
 from app.anomalies.store import format_anomaly, save_findings
 from app.dedup import refresh_duplicates
+from app.ml.service import refresh_arbitrage, refresh_dom_forecasts, retrain_due
 from app.notify import Notifier
 
 logger = logging.getLogger(__name__)
@@ -109,11 +111,20 @@ async def detect_day(session_factory, config, day: date, now: datetime, *, snaps
     result["market"] = len(findings)
 
     if snapshot:
+        if config.ML_ENABLED:
+            result["ml_training"] = await retrain_due(session_factory, config, now)
         async with session_factory() as session:
             prices = await detect_price_anomalies(session, config, day, now)
             await session.commit()
         created += prices.pop("created")
         result["prices"] = prices
+        if config.ML_ENABLED:
+            for name, refresh in (("dom", refresh_dom_forecasts), ("arbitrage", refresh_arbitrage)):
+                try:
+                    result[name] = await refresh(session_factory, config, now)
+                except Exception as exc:  # прогнозы не должны мешать дайджестам и сводке
+                    logger.exception(f"Ошибка ML ({name}): {exc}")
+                    result[name] = {"error": f"{type(exc).__name__}: {exc}"}
         async with session_factory() as session:
             result["digests"] = await send_digests(session, config, notifier, now)
             await session.commit()

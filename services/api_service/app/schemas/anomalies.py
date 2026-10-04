@@ -61,14 +61,20 @@ class RuleSummary(BaseModel):
 
 
 class PriceEstimateResponse(BaseModel):
-    """Справедливая цена v1: медиана сегмента с поправкой на пробег и год"""
+    """Справедливая цена: модель (P50 и интервал P10–P90) или v1 — медиана сегмента с поправкой на пробег и год"""
     model_config = ConfigDict(from_attributes=True)
 
-    expected_price_eur: Decimal
+    method: str = Field("segment", description="model — модель справедливой цены, segment — медиана сегмента (v1)")
+    model_version: Optional[str] = None
+    expected_price_eur: Decimal = Field(description="Справедливая цена (у модели — P50)")
+    p10_eur: Optional[Decimal] = Field(None, description="Нижняя граница интервала: 10 % похожих объявлений дешевле")
+    p90_eur: Optional[Decimal] = Field(None, description="Верхняя граница интервала: 10 % похожих объявлений дороже")
     deviation: float = Field(description="price / expected - 1: -0.2 — на 20 % дешевле")
-    robust_z: float
+    robust_z: float = Field(description="Отклонение log-цены: v1 — robust z в сегменте, модель — в «сигмах» интервала")
+    price_percentile: Optional[float] = Field(None, description="Доля похожих объявлений, которые дешевле (0–1)")
+    deal_score: Optional[float] = Field(None, description="100 · (1 − price_percentile): 90 — дешевле 90 % похожих")
     segment_level: str
-    segment_size: int
+    segment_size: int = Field(description="v1 — объявлений в сегменте, модель — примеров той же модели в обучении")
     segment: dict[str, Any]
     computed_at: datetime
 
@@ -98,7 +104,11 @@ class BelowMarketItem(BaseModel):
     country_code: str
     price_eur: Decimal
     expected_price_eur: Decimal
+    p10_eur: Optional[Decimal] = None
+    p90_eur: Optional[Decimal] = None
     deviation: float
+    deal_score: Optional[float] = None
+    method: str = "segment"
     first_seen_at: datetime
 
 

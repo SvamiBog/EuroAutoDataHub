@@ -23,6 +23,9 @@ dependencies = [
     "pydantic-settings>=2.3.4",
     "aiokafka>=0.11",
     "httpx>=0.27",
+    # ML: модели справедливой цены и срока продажи (services/data_processor/app/ml)
+    "lightgbm>=4.5",
+    "numpy>=1.26",
     # Планировщик: часовые пояса в slim-образах
     "tzdata>=2024.1",
     # API и миграции (services/api_service)

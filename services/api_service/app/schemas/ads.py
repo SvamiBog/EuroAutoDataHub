@@ -6,6 +6,7 @@ from typing import List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.anomalies import AnomalyResponse, DuplicateResponse, PriceEstimateResponse
+from app.schemas.ml import ArbitrageItem, DomForecastResponse
 
 
 class ListingResponse(BaseModel):
@@ -94,3 +95,6 @@ class ListingDetailResponse(ListingResponse):
     anomalies: List[AnomalyResponse] = []
     # тот же автомобиль в других объявлениях; в аналитике учитывается только каноничное
     duplicates: List[DuplicateResponse] = []
+    # прогноз срока до снятия и где этот автомобиль выгоднее продать (этап 5)
+    dom_forecast: Optional[DomForecastResponse] = None
+    arbitrage: List[ArbitrageItem] = []

@@ -370,10 +370,11 @@ class Anomaly(SQLModel, table=True):
 
 
 class ListingPriceEstimate(SQLModel, table=True):
-    """Оценка справедливой цены активного объявления (v1: медиана сегмента с поправкой на пробег).
+    """Оценка справедливой цены активного объявления.
 
-    Пересчитывается целиком после каждого прогона; объявления, для которых не нашлось
-    достаточного сегмента, в таблицу не попадают.
+    method = model — модель справедливой цены (этап 5): expected_price_eur — P50, интервал P10–P90,
+    deal score; segment — медиана сегмента с поправкой на пробег и год (v1, пока модели нет или по модели
+    мало примеров). Пересчитывается целиком после каждого прогона; объявления без оценки в таблицу не попадают.
     """
 
     __tablename__ = "listing_price_estimate"
@@ -385,11 +386,20 @@ class ListingPriceEstimate(SQLModel, table=True):
     expected_price_eur: Decimal = Field(sa_column=sa.Column(Money, nullable=False))
     # price / expected - 1: -0.2 — на 20 % дешевле справедливой цены
     deviation: float = Field(sa_column=sa.Column(sa.Float, nullable=False, index=True))
+    # v1: robust z в сегменте; model: z по интервалу модели (log-цена против P50 в единицах «сигмы» интервала)
     robust_z: float
-    # Сегмент сравнения: уровень укрупнения, число объявлений, описание (страна, модель, годы, топливо, КПП)
+    # Сегмент сравнения: уровень укрупнения, число объявлений, описание (страна, модель, годы, топливо, КПП).
+    # Для модели: segment_level = model, segment_size — примеров той же модели в обучении
     segment_level: str = Field(max_length=32)
     segment_size: int
     segment: dict[str, Any] = Field(sa_column=sa.Column(JSONType, nullable=False))
+    method: str = Field(default="segment", max_length=16)
+    model_version: Optional[str] = Field(default=None, max_length=64)
+    p10_eur: Optional[Decimal] = Field(default=None, sa_column=sa.Column(Money))
+    p90_eur: Optional[Decimal] = Field(default=None, sa_column=sa.Column(Money))
+    # Доля похожих объявлений, которые дешевле этого (0–1), и deal score = 100 · (1 − доля)
+    price_percentile: Optional[float] = None
+    deal_score: Optional[float] = Field(default=None, sa_column=sa.Column(sa.Float, index=True))
 
 
 class AlertSubscription(SQLModel, table=True):
@@ -428,3 +438,91 @@ class ListingDuplicate(SQLModel, table=True):
     method: str = Field(max_length=16)
     score: float
     detected_at: datetime = Field(sa_column=_ts(nullable=False))
+
+
+class MlModel(SQLModel, table=True):
+    """Версия ML-модели (этап 5): метрики на отложенной по времени выборке и сама модель.
+
+    kind: price — справедливая цена (квантили P10/P50/P90), dom — срок до снятия с публикации.
+    status: active — используется (не больше одной на kind), candidate — обучена, но не прошла проверку
+    качества, retired — заменена новой.
+    """
+
+    __tablename__ = "ml_model"
+    __table_args__ = (
+        sa.UniqueConstraint("kind", "version", name="uq_ml_model_kind_version"),
+        sa.Index("ix_ml_model_kind_status", "kind", "status"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    kind: str = Field(max_length=16)
+    version: str = Field(max_length=64)
+    status: str = Field(default="candidate", max_length=16)
+    trained_at: datetime = Field(sa_column=_ts(nullable=False))
+    activated_at: Optional[datetime] = Field(default=None, sa_column=_ts())
+    # Окна данных: обучение до valid_from, проверка — объявления, появившиеся с valid_from по valid_to
+    train_from: Optional[date] = None
+    valid_from: Optional[date] = None
+    valid_to: Optional[date] = None
+    n_train: int = 0
+    n_valid: int = 0
+    params: dict[str, Any] = Field(default_factory=dict, sa_column=sa.Column(JSONType, nullable=False))
+    # Признаки и словари категорий — чтобы прогноз кодировал данные так же, как обучение
+    features: dict[str, Any] = Field(default_factory=dict, sa_column=sa.Column(JSONType, nullable=False))
+    metrics: dict[str, Any] = Field(default_factory=dict, sa_column=sa.Column(JSONType, nullable=False))
+    note: Optional[str] = None
+    # Модели LightGBM в текстовом формате: {"p10": "...", "p50": "...", "p90": "..."}
+    artifact: dict[str, Any] = Field(sa_column=sa.Column(JSONType, nullable=False))
+
+
+class ListingDomForecast(SQLModel, table=True):
+    """Прогноз срока до снятия с публикации активного объявления (этап 5.4).
+
+    Снятие — не обязательно продажа. p_sold_N — вероятность, что объявление снимут в первые N дней
+    с момента появления; expected_days — медиана срока с момента появления (None — дольше последнего горизонта),
+    remaining_days — сколько осталось с учётом того, что объявление уже прожило.
+    """
+
+    __tablename__ = "listing_dom_forecast"
+
+    listing_id: int = Field(sa_column=sa.Column(
+        sa.BigInteger, sa.ForeignKey("listing.id", ondelete="CASCADE"), primary_key=True))
+    computed_at: datetime = Field(sa_column=_ts(nullable=False))
+    model_version: str = Field(max_length=64)
+    probabilities: dict[str, Any] = Field(sa_column=sa.Column(JSONType, nullable=False))
+    expected_days: Optional[float] = None
+    remaining_days: Optional[float] = None
+    age_days: float
+
+
+class ArbitrageOpportunity(SQLModel, table=True):
+    """Межстрановой арбитраж (этап 5.3): купить объявление в стране from и продать в стране to.
+
+    Цена продажи — прогноз модели справедливой цены для того же автомобиля в стране to (P50 и осторожная P10),
+    издержки — транспорт и расходы на ввоз по настраиваемой модели. Пересчитывается целиком после каждого прогона,
+    хранятся только выгодные варианты.
+    """
+
+    __tablename__ = "arbitrage_opportunity"
+    __table_args__ = (sa.Index("ix_arbitrage_route", "from_country", "to_country"),)
+
+    id: Optional[int] = Field(default=None, sa_column=sa.Column(BigIntPK, primary_key=True, autoincrement=True))
+    listing_id: int = Field(sa_column=sa.Column(
+        sa.BigInteger, sa.ForeignKey("listing.id", ondelete="CASCADE"), nullable=False, index=True))
+    computed_at: datetime = Field(sa_column=_ts(nullable=False))
+    model_version: str = Field(max_length=64)
+    from_country: str = Field(max_length=2)
+    to_country: str = Field(max_length=2)
+    price_eur: Decimal = Field(sa_column=sa.Column(Money, nullable=False))
+    sale_p50_eur: Decimal = Field(sa_column=sa.Column(Money, nullable=False))
+    sale_p10_eur: Decimal = Field(sa_column=sa.Column(Money, nullable=False))
+    distance_km: float
+    transport_eur: Decimal = Field(sa_column=sa.Column(Money, nullable=False))
+    import_eur: Decimal = Field(sa_column=sa.Column(Money, nullable=False))
+    # Разбивка расходов на ввоз: {"percent": ..., "fixed": ..., "per_hp": ...}
+    costs: dict[str, Any] = Field(sa_column=sa.Column(JSONType, nullable=False))
+    profit_eur: Decimal = Field(sa_column=sa.Column(Money, nullable=False, index=True))
+    profit_p10_eur: Decimal = Field(sa_column=sa.Column(Money, nullable=False))
+    roi: float
+    # Объявлений той же модели в стране продажи (в обучающей выборке модели)
+    comparables: int

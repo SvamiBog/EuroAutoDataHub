@@ -80,8 +80,9 @@ def format_digest(subscription: AlertSubscription, items: list[tuple]) -> str:
         title = " ".join(filter(None, [make or listing.make_raw, model or listing.model_raw,
                                        str(listing.year) if listing.year else None]))
         mileage = f", {_money(listing.mileage_km)} км" if listing.mileage_km is not None else ""
+        deal = f", deal score {estimate.deal_score:.0f}" if estimate.deal_score is not None else ""
         lines.append(f"{index}. {title}{mileage}, {listing.country_code} — {_money(listing.price_eur)} € "
-                     f"({estimate.deviation:+.0%} к {_money(estimate.expected_price_eur)} €), "
+                     f"({estimate.deviation:+.0%} к {_money(estimate.expected_price_eur)} €{deal}), "
                      f"{'новое' if is_new else 'подешевело'}")
         if listing.url:
             lines.append(f"   {listing.url}")
