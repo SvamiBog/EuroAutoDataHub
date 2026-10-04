@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 # Поля наблюдения, которые переносятся в listing как есть (пустые значения не затирают известные)
 ATTRIBUTE_FIELDS = {
-    "url": "url", "title": "title", "posted_at": "posted_at",
+    "category": "category", "url": "url", "title": "title", "posted_at": "posted_at",
     "make": "make_raw", "model": "model_raw", "version": "version_raw", "generation": "generation_raw",
     "year": "year", "fuel_type": "fuel_type", "gearbox": "gearbox", "transmission": "transmission",
     "color": "color", "engine_capacity_cm3": "engine_capacity_cm3", "engine_power_hp": "engine_power_hp",

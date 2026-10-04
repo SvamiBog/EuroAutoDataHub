@@ -24,7 +24,8 @@ class World:
 
     def crawl(self, run_id, day, seen, make="audi", complete=True, collected=None, apply=True, now=None, **filters):
         started = T0 + day * DAY
-        observations = [obs(listing_id=i, run_id=run_id, at=started + timedelta(minutes=5), make=m)
+        category = {"category": filters["category"]} if filters.get("category") else {}
+        observations = [obs(listing_id=i, run_id=run_id, at=started + timedelta(minutes=5), make=m, **category)
                         for i, m in seen]
 
         async def go():
@@ -110,6 +111,18 @@ def test_year_range_scope(run, session_factory, fx):
     w.crawl("r2", 1, [], year_from=2020, year_to=2024, collected=0)
     w.crawl("r3", 2, [], year_from=2020, year_to=2024, collected=0)
     assert w.statuses() == {"1": ("active", 0)}
+
+
+def test_motorcycle_section_does_not_touch_cars(run, session_factory, fx):
+    """Шард всего раздела мотоциклов (без марки) снимает только мотоциклы той же площадки."""
+    w = World(run, session_factory, fx)
+    w.crawl("cars", 0, [("c1", "honda"), ("c2", "honda")], make="honda")
+    moto = {"make": None, "category": "motorcycle"}
+    w.crawl("m1", 1, [("m1", "honda"), ("m2", "yamaha")], collected=2, **moto)
+    w.crawl("m2", 2, [("m1", "honda")], collected=1, **moto)
+    w.crawl("m3", 3, [("m1", "honda")], collected=1, **moto)
+    assert w.statuses() == {"c1": ("active", 0), "c2": ("active", 0),
+                            "m1": ("active", 0), "m2": ("delisted", 2)}
 
 
 def test_waits_until_observations_are_ingested(run, session_factory, fx):

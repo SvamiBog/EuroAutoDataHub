@@ -60,9 +60,27 @@ def test_shard_requires_make_and_known_filters():
         crawl_event_adapter.validate_python({**base, "filters": {"year_from": 2010}})
     with pytest.raises(ValidationError):
         crawl_event_adapter.validate_python({**base, "filters": {"make": "audi", "color": "red"}})
+    # раздел мотоциклов можно обходить без марки; легковые — нет; категория — из списка
+    moto = crawl_event_adapter.validate_python({**base, "filters": {"category": "motorcycle", "year_from": 2010}})
+    assert moto.filters["category"] == "motorcycle"
+    with pytest.raises(ValidationError):
+        crawl_event_adapter.validate_python({**base, "filters": {"category": "car", "year_from": 2010}})
+    with pytest.raises(ValidationError):
+        crawl_event_adapter.validate_python({**base, "filters": {"category": "boat"}})
+
+
+def test_observation_category():
+    base = {"run_id": "r1", "source": "otomoto.pl", "country_code": "PL", "source_listing_id": "1",
+            "observed_at": "2026-09-30T10:00:00Z"}
+    assert ListingObservation.model_validate(base).category == "car"  # сообщения без категории — легковые
+    assert ListingObservation.model_validate({**base, "category": "motorcycle"}).category == "motorcycle"
+    with pytest.raises(ValidationError):
+        ListingObservation.model_validate({**base, "category": "boat"})
 
 
 def test_shard_key_is_canonical():
+    assert shard_key_for({"category": "motorcycle", "year_from": 2010, "make": None}) == \
+        "category=motorcycle;year_from=2010"
     assert shard_key_for({"year_to": 2015, "make": "audi", "year_from": None}) == "make=audi;year_to=2015"
     # страна и цена (AutoScout24): ключи шардов otomoto при этом не меняются
     assert shard_key_for({"price_to": 9999, "make": "bmw", "country": "DE", "price_from": 5000, "year_from": 2018,
