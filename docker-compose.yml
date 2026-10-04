@@ -89,6 +89,11 @@ services:
       - POSTGRES_DB=${POSTGRES_DB}
       - POSTGRES_SERVER=db_postgres
       - POSTGRES_PORT=5432
+      # Админка /admin: вход и управление планировщиком
+      - ADMIN_USER=${ADMIN_USER:-admin}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
+      - SCHEDULER_URL=http://scheduler:8001
+      - CRAWL_TZ=${CRAWL_TZ:-Europe/Warsaw}
     volumes:
       - ./services/api_service:/app
     working_dir: /app
@@ -136,6 +141,11 @@ services:
       - POSTGRES_DB=${POSTGRES_DB}
       - POSTGRES_SERVER=db_postgres
       - POSTGRES_PORT=5432
+      # Админка /admin: вход и управление планировщиком
+      - ADMIN_USER=${ADMIN_USER:-admin}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
+      - SCHEDULER_URL=http://scheduler:8001
+      - CRAWL_TZ=${CRAWL_TZ:-Europe/Warsaw}
     volumes:
       - ./services/api_service:/app
     working_dir: /app
