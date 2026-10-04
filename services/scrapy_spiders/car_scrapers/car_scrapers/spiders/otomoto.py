@@ -53,7 +53,8 @@ class OtomotoSpider(ShardedSpider):
         {"name": "new_used", "value": "used"},
     ]
 
-    # Фильтры диапазона лет (как в поисковых URL otomoto: search[filter_float_year:from])
+    # Параметр объявления с годом и фильтры диапазона лет (как в поисковых URL: search[filter_float_year:from])
+    YEAR_PARAM = "year"
     YEAR_FROM_FILTER = "filter_float_year:from"
     YEAR_TO_FILTER = "filter_float_year:to"
 
@@ -144,7 +145,32 @@ class OtomotoSpider(ShardedSpider):
             return None, None
 
         nodes = [edge.get('node') for edge in advert_search.get('edges') or []]
+        if self._is_older_years_fallback(nodes):
+            self.logger.info(f"Нет объявлений в диапазоне лет ({context}): площадка отдала более старые, шард пуст")
+            return SearchPage(total=0, nodes=[]), None
         return SearchPage(total=advert_search.get('totalCount', 0) or 0, nodes=nodes), None
+
+    def _is_older_years_fallback(self, nodes) -> bool:
+        """Если в диапазоне лет нет объявлений, площадка отбрасывает нижнюю границу и отдаёт объявления постарше,
+        а totalCount — их число (autovit.ro, 2026-10: dacia 1996–2003 → объявления 1971–1991)."""
+        shard = self.current_shard
+        if shard is None or shard.year_from is None or not any(nodes):
+            return False
+        years = [self._to_int(self._params(node).get(self.YEAR_PARAM)) for node in nodes if node]
+        return all(year is not None and year < shard.year_from for year in years)
+
+    @staticmethod
+    def _params(node) -> dict:
+        return {p.get('key'): p.get('value') for p in node.get('parameters') or []
+                if p.get('key') and p.get('value') is not None}
+
+    def item_matches_shard(self, item, shard: Shard) -> bool:
+        """Фильтры применены: марка и год объявления внутри шарда."""
+        if item.get('make') != shard.make:
+            return False
+        year = item.get('year')
+        return year is None or ((shard.year_from is None or year >= shard.year_from)
+                                and (shard.year_to is None or year <= shard.year_to))
 
     def _handle_graphql_error(self, response, errors, context="unknown"):
         """Обрабатывает GraphQL ошибки с повторными попытками"""
@@ -170,8 +196,7 @@ class OtomotoSpider(ShardedSpider):
 
     def build_item(self, node) -> ListingObservationItem:
         """Создание и заполнение ListingObservationItem из узла GraphQL"""
-        raw_params = node.get('parameters', [])
-        params = {p.get('key'): p.get('value') for p in raw_params if p.get('key') and p.get('value') is not None}
+        params = self._params(node)
         price_info = (node.get('price') or {}).get('amount') or {}
 
         item = ListingObservationItem()
@@ -193,7 +218,7 @@ class OtomotoSpider(ShardedSpider):
         item['version'] = params.get('version')
         item['generation'] = params.get('generation')
 
-        item['year'] = self._to_int(params.get('year'))
+        item['year'] = self._to_int(params.get(self.YEAR_PARAM))
         item['mileage_km'] = self._to_int(params.get('mileage'))
 
         item['fuel_type'] = params.get('fuel_type')
@@ -210,15 +235,17 @@ class OtomotoSpider(ShardedSpider):
         item['region'] = (location_data.get('region') or {}).get('name')
 
         item['seller_ref'] = (node.get('sellerLink') or {}).get('id')
-        item['image_url'] = (node.get('mainPhoto') or {}).get('url')
+        # standvirtual отдаёт фото только в thumbnail
+        item['image_url'] = ((node.get('mainPhoto') or {}).get('url')
+                             or (node.get('thumbnail') or {}).get('x2'))
         return item
 
 
 class AutovitSpider(OtomotoSpider):
     """autovit.ro (Румыния) — та же платформа OLX, что и otomoto: тот же GraphQL API и фильтры.
 
-    Не проверено на живом сайте: хэш persisted query и ID категории могут отличаться
-    (SCRAPY_AUTOVIT_QUERY_HASH, docs/SOURCES.md). Цены обычно в EUR.
+    Проверено на живом сайте (make probe, 2026-10): хэш и категория совпадают с otomoto. Цены обычно в EUR,
+    часть — в RON.
     """
 
     name = "autovit"
@@ -231,8 +258,8 @@ class AutovitSpider(OtomotoSpider):
 class StandvirtualSpider(OtomotoSpider):
     """standvirtual.com (Португалия) — та же платформа OLX, что и otomoto.
 
-    Не проверено на живом сайте: хэш persisted query и ID категории могут отличаться
-    (SCRAPY_STANDVIRTUAL_QUERY_HASH, docs/SOURCES.md). Цены в EUR.
+    Год — дата первой регистрации: параметра year и фильтра filter_float_year у площадки нет
+    (фильтр игнорируется, выдача — вся марка). Цены в EUR.
     """
 
     name = "standvirtual"
@@ -240,3 +267,6 @@ class StandvirtualSpider(OtomotoSpider):
     SOURCE_NAME = "standvirtual.com"
     COUNTRY_CODE = "PT"
     BASE_URL = "https://www.standvirtual.com/graphql"
+    YEAR_PARAM = "first_registration_year"
+    YEAR_FROM_FILTER = "filter_float_first_registration_year:from"
+    YEAR_TO_FILTER = "filter_float_first_registration_year:to"
