@@ -13,6 +13,7 @@
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Этапы разработки и журнал выполнения |
 | [docs/AUDIT.md](docs/AUDIT.md) | Аудит кода: найденные ошибки и где они исправляются |
 | [docs/SOURCES.md](docs/SOURCES.md) | Площадки: чек‑лист оценки, статус, как подключить новую |
+| [docs/LOCAL_RUN.md](docs/LOCAL_RUN.md) | Запуск на своём компьютере: установка, первый обход, дашборды, проверка площадок |
 
 ## Архитектура
 
@@ -45,6 +46,7 @@ scheduler ──► Scrapy (4 площадки) ──► Kafka ──► ingest
 ## Быстрый старт (Docker)
 
 Нужны Docker с Compose v2, git и make; Python и uv нужны только для разработки и `make probe`.
+Пошагово, с установкой и первым обходом — в [docs/LOCAL_RUN.md](docs/LOCAL_RUN.md).
 - **Windows:** Docker Desktop с WSL 2. Команды выполняются в терминале Ubuntu (WSL), репозиторий клонируется
   в домашнюю папку WSL, а не на диск `C:`.
 - **Память:** выделите Docker 4 ГБ. В простое стек с Metabase занимает около 1,5 ГБ; во время обхода и
@@ -165,7 +167,8 @@ make run-spider SPIDER=autoscout24 MAKES=bmw,fiat ARGS="-a countries=DE,IT"   # 
 
 ## Локальная разработка
 
-Нужен [uv](https://docs.astral.sh/uv/). Python 3.11 он установит сам.
+Нужен [uv](https://docs.astral.sh/uv/): `curl -LsSf https://astral.sh/uv/install.sh | sh`. Python 3.11 и зависимости
+он ставит в папку `.venv` проекта, не затрагивая системный Python и другие проекты.
 
 ```bash
 uv sync                          # зависимости всех сервисов + dev-инструменты
