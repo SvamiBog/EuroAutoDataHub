@@ -15,7 +15,7 @@ from typing import Optional
 from ..items import ListingObservationItem
 from .base import SearchPage, Shard, ShardedSpider
 
-__all__ = ["OtomotoSpider", "AutovitSpider", "StandvirtualSpider", "Shard"]
+__all__ = ["OtomotoSpider", "OtomotoMotoSpider", "AutovitSpider", "StandvirtualSpider", "Shard"]
 
 
 class OtomotoSpider(ShardedSpider):
@@ -47,11 +47,13 @@ class OtomotoSpider(ShardedSpider):
         ]))
     ])
 
-    # Категория «легковые» и только подержанные
-    BASE_FILTERS = [
-        {"name": "category_id", "value": "29"},
-        {"name": "new_used", "value": "used"},
-    ]
+    # Категория транспорта (eadh_common.messages.VEHICLE_CATEGORIES) и раздел площадки: «легковые» — 29;
+    # только подержанные
+    CATEGORY = "car"
+    CATEGORY_ID = "29"
+    BASE_FILTERS = [{"name": "new_used", "value": "used"}]
+    # Настройка хэша persisted query: SCRAPY_<имя>_QUERY_HASH
+    QUERY_HASH_SETTING = None
 
     # Параметр объявления с годом и фильтры диапазона лет (как в поисковых URL: search[filter_float_year:from])
     YEAR_PARAM = "year"
@@ -70,7 +72,7 @@ class OtomotoSpider(ShardedSpider):
         spider = super().from_crawler(crawler, *args, **kwargs)
         settings = crawler.settings
         spider.graphql_max_retries = settings.getint('GRAPHQL_MAX_RETRIES', 3)
-        query_hash = settings.get(f"{cls.name.upper()}_QUERY_HASH")
+        query_hash = settings.get(cls.QUERY_HASH_SETTING or f"{cls.name.upper()}_QUERY_HASH")
         if query_hash:
             spider.EXTENSIONS = copy.deepcopy(cls.EXTENSIONS)
             spider.EXTENSIONS["persistedQuery"]["sha256Hash"] = query_hash
@@ -80,7 +82,7 @@ class OtomotoSpider(ShardedSpider):
     def __init__(self, makes: Optional[str] = None, *args, **kwargs):
         super().__init__(makes, *args, **kwargs)
         self.graphql_max_retries = 3
-        self.BASE_FILTERS = list(self.BASE_FILTERS)
+        self.BASE_FILTERS = [{"name": "category_id", "value": self.CATEGORY_ID}, *self.BASE_FILTERS]
 
     # --- Запрос страницы ---
 
@@ -93,7 +95,8 @@ class OtomotoSpider(ShardedSpider):
         managed = {'filter_enum_make', self.YEAR_FROM_FILTER, self.YEAR_TO_FILTER}
         self.BASE_FILTERS = [f for f in self.BASE_FILTERS if f.get('name') not in managed]
 
-        self.BASE_FILTERS.append({"name": "filter_enum_make", "value": shard.make})
+        if shard.make:
+            self.BASE_FILTERS.append({"name": "filter_enum_make", "value": shard.make})
         if shard.year_from is not None:
             self.BASE_FILTERS.append({"name": self.YEAR_FROM_FILTER, "value": str(shard.year_from)})
         if shard.year_to is not None:
@@ -166,7 +169,7 @@ class OtomotoSpider(ShardedSpider):
 
     def item_matches_shard(self, item, shard: Shard) -> bool:
         """Фильтры применены: марка и год объявления внутри шарда."""
-        if item.get('make') != shard.make:
+        if shard.make and item.get('make') != shard.make:
             return False
         year = item.get('year')
         return year is None or ((shard.year_from is None or year >= shard.year_from)
@@ -203,6 +206,7 @@ class OtomotoSpider(ShardedSpider):
         item['run_id'] = self.run_id
         item['source'] = self.SOURCE_NAME
         item['country_code'] = self.COUNTRY_CODE
+        item['category'] = self.CATEGORY
         item['source_listing_id'] = node.get('id')
         item['observed_at'] = datetime.now(timezone.utc).isoformat()
 
@@ -270,3 +274,24 @@ class StandvirtualSpider(OtomotoSpider):
     YEAR_PARAM = "first_registration_year"
     YEAR_FROM_FILTER = "filter_float_first_registration_year:from"
     YEAR_TO_FILTER = "filter_float_first_registration_year:to"
+
+
+class OtomotoMotoSpider(OtomotoSpider):
+    """Раздел «Motocykle i quady» otomoto.pl: мотоциклы, скутеры и квадроциклы, только подержанные.
+
+    Справочника марок раздела нет (марки легковых не подходят), поэтому шард — весь раздел, который дробится
+    по годам выпуска. Шарды ограничены MAX_SHARD_PAGES страницами: неудачная страница делает неполным
+    небольшой шард, а не весь раздел. Отдельные марки: ``scrapy crawl otomoto_moto -a makes=honda,yamaha``.
+    """
+
+    name = "otomoto_moto"
+    CATEGORY = "motorcycle"
+    CATEGORY_ID = "65"
+    MAKES_FILE = None
+    MAX_SHARD_PAGES = 40
+    QUERY_HASH_SETTING = "OTOMOTO_QUERY_HASH"
+
+    def initial_shards(self) -> list[Shard]:
+        if self.makes_list:
+            return [Shard(make, category=self.CATEGORY) for make in self.makes_list]
+        return [Shard(category=self.CATEGORY)]
