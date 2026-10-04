@@ -1,4 +1,11 @@
-"""Справедливая цена v1 и ценовые аномалии объявлений (этап 3.3).
+"""Справедливая цена и ценовые аномалии объявлений: v1 (этап 3.3) и модель (этапы 5.1–5.2).
+
+Если есть активная модель справедливой цены (app/ml/price_model.py), объявление оценивается ею:
+справедливая цена — P50, интервал P10–P90, z — отклонение log-цены от P50 в «сигмах» интервала,
+deal score — доля похожих объявлений, которые дороже (app/ml/deal.py). Аномалия по модели —
+|z| ≥ PRICE_MODEL_Z_THRESHOLD и отклонение от P50 ≥ PRICE_MIN_DEVIATION (цена вне интервала P10–P90).
+Объявления моделей, которых в обучении было меньше ML_PRICE_MIN_SUPPORT, и все объявления, пока модели
+нет, оцениваются по v1:
 
 Для каждого активного объявления подбирается сегмент сравнения: та же модель, год выпуска ±1,
 страна, топливо и КПП. Если в сегменте меньше PRICE_MIN_SEGMENT объявлений, он укрупняется:
@@ -14,14 +21,15 @@
 Цена дешевле справедливой на PRICE_IMPLAUSIBLE_DISCOUNT и больше считается неправдоподобной
 (заглушка, аренда, битый автомобиль) и помечается как проблема качества данных, а не выгодное предложение.
 
-Оценки всех объявлений сохраняются в listing_price_estimate (дайджест, API, дашборды).
+Оценки всех объявлений сохраняются в listing_price_estimate (дайджест, API, дашборды), deal score —
+и у оценок v1 (по robust z).
 """
 import logging
 import math
 from dataclasses import dataclass
 from datetime import date, datetime
 from statistics import median
-from typing import Callable, Optional
+from typing import Callable, Optional, Union
 
 from sqlalchemy import delete, exists, insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,6 +41,10 @@ from eadh_common.models import (
 )
 
 from app.anomalies.store import Finding, resolve_missing, save_findings
+from app.ml.executor import run_ml
+from app.ml.deal import deal_score, interval_z, normal_cdf
+from app.ml.features import CarRow
+from app.ml.price_model import PriceModel
 
 logger = logging.getLogger(__name__)
 
@@ -53,10 +65,21 @@ class Car:
     gearbox: Optional[str]
     mileage: Optional[int]
     price_eur: float
+    # признаки модели справедливой цены (v1 их не использует)
+    source: Optional[str] = None
+    transmission: Optional[str] = None
+    power_hp: Optional[int] = None
+    first_seen: Optional[date] = None
 
     @property
     def log_price(self) -> float:
         return math.log(self.price_eur)
+
+    def as_row(self) -> CarRow:
+        return CarRow(id=self.id, make_id=self.make_id, model_id=self.model_id, country=self.country,
+                      source=self.source or "", year=self.year, mileage_km=self.mileage, power_hp=self.power_hp,
+                      fuel=self.fuel, gearbox=self.gearbox, transmission=self.transmission, price_eur=self.price_eur,
+                      start=self.first_seen or date.today())
 
 
 @dataclass(frozen=True)
@@ -174,6 +197,7 @@ def pool_stats(cars: list[Car]) -> PoolStats:
 
 @dataclass
 class Estimate:
+    """Оценка v1: медиана сегмента."""
     car: Car
     level: Level
     stats: PoolStats
@@ -181,14 +205,77 @@ class Estimate:
     deviation: float  # price / expected - 1
     robust_z: float
 
+    method = "segment"
 
-def estimate_prices(cars: list[Car], min_segment: int) -> list[Estimate]:
-    """Справедливая цена для каждого объявления, для которого нашёлся сегмент нужного размера."""
+    @property
+    def deal_score(self) -> float:
+        return deal_score(self.robust_z)
+
+    @property
+    def price_percentile(self) -> float:
+        return normal_cdf(self.robust_z)
+
+
+@dataclass
+class ModelEstimate:
+    """Оценка моделью справедливой цены: P50 и интервал P10–P90."""
+    car: Car
+    version: str
+    p10: float
+    expected_price_eur: float  # P50
+    p90: float
+    support: int  # примеров той же модели в обучении
+    deviation: float
+    robust_z: float  # z по интервалу модели
+
+    method = "model"
+
+    @property
+    def deal_score(self) -> float:
+        return deal_score(self.robust_z)
+
+    @property
+    def price_percentile(self) -> float:
+        return normal_cdf(self.robust_z)
+
+
+AnyEstimate = Union[Estimate, ModelEstimate]
+
+
+def model_estimates(model: PriceModel, cars: list[Car], min_support: int, threads: int = 0) -> list[ModelEstimate]:
+    """Оценки моделью для объявлений с достаточным числом примеров той же модели в обучении."""
+    eligible = [c for c in cars if model.support.get(str(c.model_id), 0) >= min_support]
+    if not eligible:
+        return []
+    pred = model.predict_log([c.as_row() for c in eligible], threads)
+    result = []
+    for car, (lo, mid, hi) in zip(eligible, pred):
+        z = interval_z(car.log_price, lo, mid, hi)
+        result.append(ModelEstimate(
+            car=car, version=model.version, p10=math.exp(lo), expected_price_eur=math.exp(mid), p90=math.exp(hi),
+            support=model.support.get(str(car.model_id), 0), deviation=math.exp(car.log_price - mid) - 1,
+            robust_z=z))
+    return result
+
+
+def combine(v1: list[Estimate], by_model: list[ModelEstimate]) -> list[AnyEstimate]:
+    """Оценка модели заменяет оценку v1 того же объявления."""
+    chosen: dict[int, AnyEstimate] = {e.car.id: e for e in v1}
+    chosen.update({e.car.id: e for e in by_model})
+    return sorted(chosen.values(), key=lambda e: e.car.id)
+
+
+def estimate_prices(cars: list[Car], min_segment: int, reference: Optional[list[Car]] = None) -> list[Estimate]:
+    """Справедливая цена для каждого объявления, для которого нашёлся сегмент нужного размера.
+
+    reference — объявления, из которых строятся сегменты (по умолчанию — сами cars). Сравнение с моделью
+    по времени передаёт сюда только прошлые объявления.
+    """
     # уровень → ключ сегмента → год → объявления
     groups: list[dict[tuple, dict[int, list[Car]]]] = []
     for level in LEVELS:
         by_key: dict[tuple, dict[int, list[Car]]] = {}
-        for car in cars:
+        for car in cars if reference is None else reference:
             by_key.setdefault(level.key(car), {}).setdefault(car.year, []).append(car)
         groups.append(by_key)
 
@@ -198,7 +285,7 @@ def estimate_prices(cars: list[Car], min_segment: int) -> list[Estimate]:
         for index, level in enumerate(LEVELS):
             cache_key = (index, level.key(car), car.year)
             if cache_key not in cache:
-                years = groups[index][level.key(car)]
+                years = groups[index].get(level.key(car), {})
                 pool = [c for y in (car.year - 1, car.year, car.year + 1) for c in years.get(y, ())]
                 cache[cache_key] = pool_stats(pool) if len(pool) >= min_segment else None
             stats = cache[cache_key]
@@ -216,8 +303,12 @@ def _money(value: float) -> str:
     return f"{value:,.0f}".replace(",", " ")
 
 
-def segment_description(estimate: Estimate) -> dict:
-    car, level = estimate.car, estimate.level
+def segment_description(estimate: AnyEstimate) -> dict:
+    car = estimate.car
+    if isinstance(estimate, ModelEstimate):
+        return {"level": "model", "model_id": car.model_id, "make_id": car.make_id, "version": estimate.version,
+                "support": estimate.support}
+    level = estimate.level
     description = {"level": level.name, "model_id": car.model_id, "make_id": car.make_id,
                    "year_from": car.year - 1, "year_to": car.year + 1}
     for name in level.fields:
@@ -225,24 +316,34 @@ def segment_description(estimate: Estimate) -> dict:
     return description
 
 
-def classify(estimate: Estimate, config) -> Optional[tuple[str, AnomalyKind, AnomalySeverity]]:
+def classify(estimate: AnyEstimate, config) -> Optional[tuple[str, AnomalyKind, AnomalySeverity]]:
     z, deviation = estimate.robust_z, estimate.deviation
-    if z <= -config.PRICE_Z_THRESHOLD and deviation <= -config.PRICE_IMPLAUSIBLE_DISCOUNT:
+    threshold = config.PRICE_MODEL_Z_THRESHOLD if isinstance(estimate, ModelEstimate) else config.PRICE_Z_THRESHOLD
+    if z <= -threshold and deviation <= -config.PRICE_IMPLAUSIBLE_DISCOUNT:
         return "price_implausible", AnomalyKind.DATA_QUALITY, AnomalySeverity.INFO
-    if z <= -config.PRICE_Z_THRESHOLD and deviation <= -config.PRICE_MIN_DEVIATION:
+    if z <= -threshold and deviation <= -config.PRICE_MIN_DEVIATION:
         return "price_below_market", AnomalyKind.PRICE, AnomalySeverity.WARNING
-    if z >= config.PRICE_Z_THRESHOLD and deviation >= config.PRICE_MIN_DEVIATION:
+    if z >= threshold and deviation >= config.PRICE_MIN_DEVIATION:
         return "price_above_market", AnomalyKind.PRICE, AnomalySeverity.INFO
     return None
 
 
-def explain(estimate: Estimate, names: dict[str, dict[int, str]]) -> str:
+def explain(estimate: AnyEstimate, names: dict[str, dict[int, str]]) -> str:
     """«Toyota Corolla 2020, 85 000 км: цена 12 500 EUR на 32 % ниже справедливой (18 400 EUR); …»"""
-    car, stats, level = estimate.car, estimate.stats, estimate.level
+    car = estimate.car
     title = " ".join(filter(None, [names["make"].get(car.make_id), names["model"].get(car.model_id)])) \
         or f"модель {car.model_id}"
     mileage = f", {_money(car.mileage)} км" if car.mileage is not None else ""
     direction = "ниже" if estimate.deviation < 0 else "выше"
+    if isinstance(estimate, ModelEstimate):
+        share = estimate.price_percentile if estimate.deviation < 0 else 1 - estimate.price_percentile
+        cheaper = "дешевле" if estimate.deviation < 0 else "дороже"
+        return (f"{title} {car.year}{mileage}: цена {_money(car.price_eur)} EUR на {abs(estimate.deviation):.0%} "
+                f"{direction} справедливой ({_money(estimate.expected_price_eur)} EUR; интервал P10–P90 "
+                f"{_money(estimate.p10)}–{_money(estimate.p90)} EUR), {cheaper}, чем {1 - share:.0%} похожих "
+                f"объявлений, deal score {estimate.deal_score:.0f}; модель {estimate.version}, "
+                f"примеров модели в обучении {estimate.support}")
+    stats, level = estimate.stats, estimate.level
     segment = [f"{car.year - 1}–{car.year + 1}"] + [
         str(getattr(car, name)) for name in level.fields if getattr(car, name) is not None]
     text = (f"{title} {car.year}{mileage}: цена {_money(car.price_eur)} EUR на {abs(estimate.deviation):.0%} "
@@ -256,14 +357,16 @@ def explain(estimate: Estimate, names: dict[str, dict[int, str]]) -> str:
 async def load_cars(session: AsyncSession) -> list[Car]:
     rows = (await session.execute(
         select(Listing.id, Listing.country_code, Listing.make_id, Listing.model_id, Listing.year, Listing.fuel_type,
-               Listing.gearbox, Listing.mileage_km, Listing.price_eur)
+               Listing.gearbox, Listing.mileage_km, Listing.price_eur, Listing.source, Listing.transmission,
+               Listing.engine_power_hp, Listing.first_seen_at)
         .where(Listing.status == ListingStatus.ACTIVE.value, Listing.quality_flags.is_(None),
                Listing.price_eur.is_not(None), Listing.price_eur > 0,
                Listing.model_id.is_not(None), Listing.year.is_not(None),
                ~exists().where(ListingDuplicate.listing_id == Listing.id))
     )).tuples().all()
     return [Car(id=r[0], country=r[1], make_id=r[2], model_id=r[3], year=r[4], fuel=r[5], gearbox=r[6],
-                mileage=r[7], price_eur=float(r[8])) for r in rows]
+                mileage=r[7], price_eur=float(r[8]), source=r[9], transmission=r[10], power_hp=r[11],
+                first_seen=r[12].date()) for r in rows]
 
 
 async def load_names(session: AsyncSession) -> dict[str, dict[int, str]]:
@@ -272,13 +375,24 @@ async def load_names(session: AsyncSession) -> dict[str, dict[int, str]]:
     return {"make": makes, "model": models}
 
 
-async def store_estimates(session: AsyncSession, estimates: list[Estimate], now: datetime,
+def estimate_row(e: AnyEstimate, now: datetime) -> dict:
+    row = {"listing_id": e.car.id, "computed_at": now, "price_eur": round(e.car.price_eur, 2),
+           "expected_price_eur": round(e.expected_price_eur, 2), "deviation": round(e.deviation, 4),
+           "robust_z": round(e.robust_z, 3), "segment": segment_description(e), "method": e.method,
+           "price_percentile": round(e.price_percentile, 4), "deal_score": e.deal_score}
+    if isinstance(e, ModelEstimate):
+        row.update(segment_level="model", segment_size=e.support, model_version=e.version,
+                   p10_eur=round(e.p10, 2), p90_eur=round(e.p90, 2))
+    else:
+        row.update(segment_level=e.level.name, segment_size=e.stats.size, model_version=None, p10_eur=None,
+                   p90_eur=None)
+    return row
+
+
+async def store_estimates(session: AsyncSession, estimates: list[AnyEstimate], now: datetime,
                           chunk_size: int = 5000) -> None:
     await session.execute(delete(ListingPriceEstimate))
-    rows = [{"listing_id": e.car.id, "computed_at": now, "price_eur": round(e.car.price_eur, 2),
-             "expected_price_eur": round(e.expected_price_eur, 2), "deviation": round(e.deviation, 4),
-             "robust_z": round(e.robust_z, 3), "segment_level": e.level.name, "segment_size": e.stats.size,
-             "segment": segment_description(e)} for e in estimates]
+    rows = [estimate_row(e, now) for e in estimates]
     for start in range(0, len(rows), chunk_size):
         await session.execute(insert(ListingPriceEstimate), rows[start:start + chunk_size])
 
@@ -290,7 +404,15 @@ async def detect_price_anomalies(session: AsyncSession, config, day: date, now: 
     Коммит — у вызывающего.
     """
     cars = await load_cars(session)
-    estimates = estimate_prices(cars, config.PRICE_MIN_SEGMENT)
+    v1 = estimate_prices(cars, config.PRICE_MIN_SEGMENT)
+    by_model: list[ModelEstimate] = []
+    if config.ML_ENABLED:
+        from app.ml.service import load_price_model  # сервис ML импортирует этот модуль не раньше запуска
+
+        model = await load_price_model(session)
+        if model is not None:
+            by_model = await run_ml(model_estimates, model, cars, config.ML_PRICE_MIN_SUPPORT, config.ML_THREADS)
+    estimates = combine(v1, by_model)
     await store_estimates(session, estimates, now)
     names = await load_names(session)
 
@@ -305,19 +427,29 @@ async def detect_price_anomalies(session: AsyncSession, config, day: date, now: 
             key=f"{rule}:{car.id}", kind=kind, rule=rule, severity=severity, entity_type="listing",
             entity_id=str(car.id), listing_id=car.id, country_code=car.country, make_id=car.make_id,
             model_id=car.model_id, message=explain(estimate, names), detected_on=day,
-            score=round(estimate.robust_z, 3),
-            details={"price_eur": round(car.price_eur, 2), "expected_price_eur": round(estimate.expected_price_eur, 2),
-                     "deviation": round(estimate.deviation, 4), "robust_z": round(estimate.robust_z, 3),
-                     "mileage_km": car.mileage, "segment": segment_description(estimate),
-                     "segment_size": estimate.stats.size, "mileage_median": estimate.stats.mileage_median,
-                     "slope_per_10k_km": round(estimate.stats.slope * 10_000, 4),
-                     "slope_per_year": round(estimate.stats.year_slope, 4)}))
+            score=round(estimate.robust_z, 3), details=finding_details(estimate)))
     created = await save_findings(session, findings, now)
     resolved = await resolve_missing(session, PRICE_RULES, now)
     by_rule: dict[str, int] = {}
     for finding in findings:
         by_rule[finding.rule] = by_rule.get(finding.rule, 0) + 1
-    logger.info(f"Справедливая цена: оценено {len(estimates)} из {len(cars)} объявлений; аномалий {by_rule}, "
-                f"новых {len(created)}, закрыто {resolved}")
-    return {"listings": len(cars), "estimated": len(estimates), "anomalies": by_rule,
+    logger.info(f"Справедливая цена: оценено {len(estimates)} из {len(cars)} объявлений (моделью {len(by_model)}); "
+                f"аномалий {by_rule}, новых {len(created)}, закрыто {resolved}")
+    return {"listings": len(cars), "estimated": len(estimates), "by_model": len(by_model), "anomalies": by_rule,
             "created": created, "resolved": resolved}
+
+
+def finding_details(estimate: AnyEstimate) -> dict:
+    car = estimate.car
+    details = {"method": estimate.method, "price_eur": round(car.price_eur, 2),
+               "expected_price_eur": round(estimate.expected_price_eur, 2), "deviation": round(estimate.deviation, 4),
+               "robust_z": round(estimate.robust_z, 3), "deal_score": estimate.deal_score, "mileage_km": car.mileage,
+               "segment": segment_description(estimate)}
+    if isinstance(estimate, ModelEstimate):
+        details.update(p10_eur=round(estimate.p10, 2), p90_eur=round(estimate.p90, 2), model_version=estimate.version,
+                       support=estimate.support)
+    else:
+        details.update(segment_size=estimate.stats.size, mileage_median=estimate.stats.mileage_median,
+                       slope_per_10k_km=round(estimate.stats.slope * 10_000, 4),
+                       slope_per_year=round(estimate.stats.year_slope, 4))
+    return details

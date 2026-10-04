@@ -115,7 +115,8 @@ define run_tests
 	cd services/api_service && uv run pytest tests $(1)
 endef
 
-.PHONY: test test-warnings test-strict test-coverage test-quiet test-verbose lint e2e probe run-spider
+.PHONY: test test-warnings test-strict test-coverage test-quiet test-verbose lint e2e probe run-spider \
+	ml-train ml-status ml-refresh ml-benchmark
 test:
 	@echo "--- 🚀 Запуск всех тестов через pytest ---"
 	$(call run_tests,-v)
@@ -153,6 +154,23 @@ bi-provision:
 # Пересчёт витрины за период: make stats-backfill FROM=2026-09-01 TO=2026-09-30
 stats-backfill:
 	$(DC) exec ingestor python -m app.aggregates --from $(FROM) --to $(TO)
+
+# ML (этап 5, docs/ML.md): модели справедливой цены и срока до снятия в контейнере ingestor
+# make ml-train [KIND=price|dom|all] — обучить сейчас; make ml-status — версии и метрики
+KIND ?= all
+ml-train:
+	$(DC) exec ingestor python -m app.ml train $(KIND)
+
+ml-status:
+	$(DC) exec ingestor python -m app.ml status
+
+# Пересчитать справедливые цены, прогноз срока и арбитраж по активной модели
+ml-refresh:
+	$(DC) exec ingestor python -m app.ml refresh
+
+# Сравнение v1 и модели на синтетическом рынке (без БД)
+ml-benchmark:
+	$(DC) exec ingestor python -m app.ml benchmark
 
 # Сквозная проверка паук -> Kafka -> ingestor -> PostgreSQL на запущенном стеке (make dc-up)
 e2e:
@@ -198,6 +216,12 @@ help:
 	@echo "  bi-up              - Запуск Metabase (http://localhost:3000)"
 	@echo "  bi-provision       - Создать/обновить дашборды Metabase"
 	@echo "  stats-backfill     - Пересчёт витрины сегментов (FROM=… TO=…)"
+	@echo ""
+	@echo "ML (docs/ML.md):"
+	@echo "  ml-train           - Обучить модели сейчас (KIND=price|dom|all)"
+	@echo "  ml-status          - Версии моделей и метрики"
+	@echo "  ml-refresh         - Пересчитать справедливые цены, прогноз срока и арбитраж"
+	@echo "  ml-benchmark       - v1 против модели на синтетическом рынке"
 	@echo ""
 	@echo "Тестирование:"
 	@echo "  test               - Запуск всех тестов"

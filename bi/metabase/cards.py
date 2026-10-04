@@ -16,6 +16,7 @@ VARIABLES = {
     "date_to": ("По дату", "date", "date/single"),
     "source": ("Площадка", "text", "string/="),
     "listing": ("ID объявления на площадке", "text", "string/="),
+    "to_country": ("Страна продажи", "text", "string/="),
 }
 
 LATEST_STATS = "(SELECT max(stat_date) FROM segment_daily_stats)"
@@ -215,6 +216,9 @@ SELECT source AS "Площадка", source_listing_id AS "ID", title AS "Заг
        price_eur AS "Цена, EUR", expected_price_eur AS "Справедливая цена, EUR",
        round((price_deviation * 100)::numeric, 1) AS "Отклонение, %", quality_flags AS "Нарушения качества",
        duplicate_of AS "Дубль объявления",
+       price_method AS "Метод оценки", expected_price_p10_eur AS "P10, EUR", expected_price_p90_eur AS "P90, EUR",
+       deal_score AS "Deal score", dom_expected_days AS "Прогноз срока до снятия, дн.",
+       dom_remaining_days AS "Осталось, дн.",
        status AS "Статус", first_seen_at AS "Впервые", last_seen_at AS "Последний раз",
        delisted_at AS "Снято", days_on_market AS "Дней на рынке", url AS "Ссылка"
 FROM v_listing
@@ -319,7 +323,9 @@ LIMIT 100""",
         "sql": f"""
 SELECT vm.name AS "Марка", vmo.name AS "Модель", l.year AS "Год", l.mileage_km AS "Пробег",
        l.country_code AS "Страна", l.price_eur AS "Цена, EUR", e.expected_price_eur AS "Справедливая цена, EUR",
-       round((e.deviation * 100)::numeric, 1) AS "Отклонение, %", e.segment_size AS "Объявлений в сегменте",
+       e.p10_eur AS "P10, EUR", e.p90_eur AS "P90, EUR",
+       round((e.deviation * 100)::numeric, 1) AS "Отклонение, %", e.deal_score AS "Deal score",
+       e.method AS "Метод оценки", e.segment_size AS "Объявлений в сегменте / примеров модели",
        l.first_seen_at AS "Впервые", l.url AS "Ссылка"
 FROM listing_price_estimate e
 JOIN listing l ON l.id = e.listing_id
@@ -380,6 +386,96 @@ ORDER BY kind, count(*) DESC""",
     },
 }
 
+# --- Этап 5: арбитраж, модели, deal score ---
+ARBITRAGE_FROM = """
+FROM arbitrage_opportunity a
+JOIN listing l ON l.id = a.listing_id
+LEFT JOIN vehicle_make vm ON vm.id = l.make_id
+LEFT JOIN vehicle_model vmo ON vmo.id = l.model_id
+WHERE 1 = 1
+  [[AND vm.slug = {{make}}]]
+  [[AND vmo.slug = {{model}}]]
+  [[AND a.from_country = {{country}}]]
+  [[AND a.to_country = {{to_country}}]]"""
+
+CARDS.update({
+    "arbitrage_routes": {
+        "name": "Арбитраж: маршруты",
+        "display": "table",
+        "sql": f"""
+SELECT a.from_country || ' → ' || a.to_country AS "Маршрут", count(*) AS "Вариантов",
+       round(percentile_cont(0.5) WITHIN GROUP (ORDER BY a.profit_eur)) AS "Медиана прибыли, EUR",
+       round((percentile_cont(0.5) WITHIN GROUP (ORDER BY a.roi) * 100)::numeric, 1) AS "Медиана ROI, %",
+       round(avg(a.distance_km)) AS "Расстояние, км", round(avg(a.transport_eur)) AS "Транспорт, EUR",
+       round(avg(a.import_eur)) AS "Ввоз, EUR"{ARBITRAGE_FROM}
+GROUP BY a.from_country, a.to_country
+ORDER BY count(*) DESC""",
+    },
+    "arbitrage_top": {
+        "name": "Арбитраж: лучшие варианты",
+        "display": "table",
+        "sql": f"""
+SELECT vm.name AS "Марка", vmo.name AS "Модель", l.year AS "Год", l.mileage_km AS "Пробег",
+       a.from_country AS "Откуда", a.to_country AS "Куда", a.price_eur AS "Цена покупки, EUR",
+       a.sale_p50_eur AS "Цена продажи P50, EUR", a.sale_p10_eur AS "Цена продажи P10, EUR",
+       a.transport_eur AS "Транспорт, EUR", a.import_eur AS "Ввоз, EUR", a.profit_eur AS "Прибыль, EUR",
+       a.profit_p10_eur AS "Прибыль при P10, EUR", round((a.roi * 100)::numeric, 1) AS "ROI, %",
+       a.comparables AS "Объявлений модели в стране продажи", l.url AS "Ссылка"{ARBITRAGE_FROM}
+ORDER BY a.profit_eur DESC
+LIMIT 200""",
+        "viz": YEAR_COLUMN,
+    },
+    "listing_arbitrage": {
+        "name": "Объявление: где выгоднее продать",
+        "display": "table",
+        "sql": """
+SELECT a.to_country AS "Страна продажи", a.sale_p50_eur AS "Цена продажи P50, EUR",
+       a.sale_p10_eur AS "Цена продажи P10, EUR", a.transport_eur AS "Транспорт, EUR", a.import_eur AS "Ввоз, EUR",
+       a.profit_eur AS "Прибыль, EUR", round((a.roi * 100)::numeric, 1) AS "ROI, %"
+FROM arbitrage_opportunity a
+JOIN listing l ON l.id = a.listing_id
+WHERE 1 = 1
+  [[AND l.source = {{source}}]]
+  [[AND l.source_listing_id = {{listing}}]]
+ORDER BY a.profit_eur DESC
+LIMIT 20""",
+    },
+    "ml_models": {
+        "name": "Модели: версии и качество",
+        "display": "table",
+        # качество на отложенной по времени выборке; candidate — не прошла проверку, причина — в последней колонке
+        "sql": """
+SELECT m.kind AS "Модель", m.version AS "Версия", m.status AS "Статус", m.trained_at AS "Обучена",
+       m.n_train AS "Обучение", m.n_valid AS "Проверка",
+       round(((m.metrics -> 'model' ->> 'mape')::numeric) * 100, 1) AS "MAPE, %",
+       round(((m.metrics -> 'v1' ->> 'mape')::numeric) * 100, 1) AS "MAPE v1, %",
+       round(((m.metrics -> 'model' ->> 'coverage')::numeric) * 100, 1) AS "Покрытие P10–P90, %",
+       (m.metrics -> 'horizons' -> '30' ->> 'auc')::numeric AS "ROC AUC, 30 дн.",
+       m.note AS "Не прошла проверку"
+FROM ml_model m
+WHERE 1 = 1
+  [[AND m.trained_at >= {{date_from}}]]
+ORDER BY m.trained_at DESC, m.id DESC
+LIMIT 50""",
+    },
+    "ml_deal_scores": {
+        "name": "Модели: deal score активных объявлений",
+        "display": "bar",
+        "sql": f"""
+SELECT (floor(e.deal_score / 10) * 10)::int AS deal_score, e.method AS method, count(*) AS listings
+FROM listing_price_estimate e
+JOIN listing l ON l.id = e.listing_id
+LEFT JOIN vehicle_make vm ON vm.id = l.make_id
+LEFT JOIN vehicle_model vmo ON vmo.id = l.model_id
+WHERE l.status = 'active' AND e.deal_score IS NOT NULL{LISTING_FILTERS}
+GROUP BY 1, 2
+ORDER BY 1""",
+        "viz": {"graph.dimensions": ["deal_score", "method"], "graph.metrics": ["listings"], "stackable.stack_type":
+                "stacked", "graph.x_axis.title_text": "Deal score (90 — дешевле 90 % похожих)",
+                "graph.y_axis.title_text": "Объявлений"},
+    },
+})
+
 # Дашборды: фильтры и карточки (ключ карточки, ширина, высота); сетка Metabase — 24 колонки
 DASHBOARDS = [
     {
@@ -402,7 +498,8 @@ DASHBOARDS = [
         "name": "Объявление",
         "description": "Карточка объявления, цена по дням и журнал изменений. Укажите ID объявления на площадке.",
         "parameters": ["source", "listing"],
-        "cards": [("listing_card", 24, 5), ("listing_price_history", 12, 7), ("listing_events", 12, 7)],
+        "cards": [("listing_card", 24, 5), ("listing_price_history", 12, 7), ("listing_events", 12, 7),
+                  ("listing_arbitrage", 24, 5)],
     },
     {
         "name": "Здоровье сбора",
@@ -417,5 +514,19 @@ DASHBOARDS = [
         "parameters": ["make", "model", "country", "year_from", "year_to", "date_from", "date_to"],
         "cards": [("anomaly_daily", 12, 6), ("anomaly_precision", 12, 6), ("anomaly_health", 24, 6),
                   ("anomaly_below_market", 24, 8), ("anomaly_market", 12, 7), ("anomaly_behavior", 12, 7)],
+    },
+    {
+        "name": "Арбитраж",
+        "description": "Купить в одной стране и продать в другой: цена того же автомобиля в стране продажи по модели "
+                       "справедливой цены, транспорт и расходы на ввоз (настраиваются, см. docs/ML.md).",
+        "parameters": ["make", "model", "country", "to_country"],
+        "cards": [("arbitrage_routes", 24, 6), ("arbitrage_top", 24, 9)],
+    },
+    {
+        "name": "Модели",
+        "description": "Версии моделей справедливой цены и срока до снятия, их качество на отложенной по времени "
+                       "выборке; распределение deal score активных объявлений.",
+        "parameters": ["make", "model", "country", "date_from"],
+        "cards": [("ml_models", 24, 6), ("ml_deal_scores", 24, 7)],
     },
 ]

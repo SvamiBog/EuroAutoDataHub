@@ -146,7 +146,7 @@ async def listing_anomalies(session: AsyncSession, listing_id: int) -> list[dict
 async def below_market(session: AsyncSession, *, min_discount: float, max_discount: float, make: Optional[str],
                        model: Optional[str], countries: Sequence[str], year_from: Optional[int],
                        year_to: Optional[int], mileage_max: Optional[int], price_max_eur: Optional[float],
-                       limit: int) -> list[dict[str, Any]]:
+                       limit: int, min_deal_score: Optional[float] = None) -> list[dict[str, Any]]:
     """Активные объявления дешевле справедливой цены (listing_price_estimate)."""
     query = (
         select(Listing, ListingPriceEstimate, VehicleMake.slug, VehicleModel.slug)
@@ -171,12 +171,15 @@ async def below_market(session: AsyncSession, *, min_discount: float, max_discou
         query = query.where(Listing.mileage_km <= mileage_max)
     if price_max_eur is not None:
         query = query.where(Listing.price_eur <= price_max_eur)
+    if min_deal_score is not None:
+        query = query.where(ListingPriceEstimate.deal_score >= min_deal_score)
     rows = (await session.execute(query.order_by(ListingPriceEstimate.deviation, Listing.id).limit(limit))).all()
     return [{
         "listing_id": listing.id, "source": listing.source, "source_listing_id": listing.source_listing_id,
         "url": listing.url, "title": listing.title, "make": make_slug, "model": model_slug, "year": listing.year,
         "mileage_km": listing.mileage_km, "country_code": listing.country_code, "price_eur": listing.price_eur,
-        "expected_price_eur": estimate.expected_price_eur, "deviation": estimate.deviation,
+        "expected_price_eur": estimate.expected_price_eur, "p10_eur": estimate.p10_eur, "p90_eur": estimate.p90_eur,
+        "deviation": estimate.deviation, "deal_score": estimate.deal_score, "method": estimate.method,
         "first_seen_at": listing.first_seen_at,
     } for listing, estimate, make_slug, model_slug in rows]
 

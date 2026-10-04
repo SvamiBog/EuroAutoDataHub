@@ -66,15 +66,17 @@ async def below_market(
     year_to: Optional[int] = Query(None, ge=1900, le=2100),
     mileage_max: Optional[int] = Query(None, ge=0),
     price_max_eur: Optional[float] = Query(None, ge=0),
+    min_deal_score: Optional[float] = Query(None, ge=0, le=100, description="Deal score не меньше (0–100)"),
     limit: int = Query(50, ge=1, le=500),
     session: AsyncSession = Depends(get_session),
 ):
-    """Активные объявления дешевле справедливой цены (оценка v1 после последнего прогона)."""
+    """Активные объявления дешевле справедливой цены (оценка после последнего прогона: модель или v1)."""
     if min_discount >= max_discount:
         raise HTTPException(status_code=422, detail="min_discount должен быть меньше max_discount")
     return await crud.below_market(session, min_discount=min_discount, max_discount=max_discount, make=make,
                                    model=model, countries=country, year_from=year_from, year_to=year_to,
-                                   mileage_max=mileage_max, price_max_eur=price_max_eur, limit=limit)
+                                   mileage_max=mileage_max, price_max_eur=price_max_eur, limit=limit,
+                                   min_deal_score=min_deal_score)
 
 
 @router.get("/{anomaly_id}", response_model=AnomalyResponse)
