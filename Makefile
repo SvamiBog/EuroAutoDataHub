@@ -49,6 +49,13 @@ run-oto:
 	@echo "--- Запуск Scrapy через главный docker-compose ---"
 	$(DC) run --rm scrapy_runner scrapy crawl otomoto $(MAKES_ARG)
 
+# Мотоциклы otomoto: весь раздел или MAKES=honda,yamaha. Обычно запуск — кнопкой в админке (/admin)
+run-moto:
+	$(DC) run --rm scrapy_runner scrapy crawl otomoto_moto $(MAKES_ARG)
+
+admin:
+	@echo "Админка: http://localhost:8000/admin (вход — ADMIN_USER и ADMIN_PASSWORD из .env)"
+
 # Любой паук: make run-spider SPIDER=autoscout24 MAKES=bmw ARGS="-a countries=DE"
 SPIDER ?= otomoto
 ARGS ?=
@@ -115,7 +122,7 @@ define run_tests
 	cd services/api_service && uv run pytest tests $(1)
 endef
 
-.PHONY: test test-warnings test-strict test-coverage test-quiet test-verbose lint e2e probe run-spider \
+.PHONY: run-moto admin test test-warnings test-strict test-coverage test-quiet test-verbose lint e2e probe run-spider \
 	ml-train ml-status ml-refresh ml-benchmark
 test:
 	@echo "--- 🚀 Запуск всех тестов через pytest ---"
@@ -195,6 +202,8 @@ help:
 	@echo ""
 	@echo "Парсинг:"
 	@echo "  run-oto            - Запуск парсера Otomoto в Docker (MAKES=audi,bmw — только эти марки)"
+	@echo "  run-moto           - Мотоциклы otomoto в Docker (весь раздел или MAKES=honda,yamaha)"
+	@echo "  admin              - Адрес админки сбора данных"
 	@echo "  run-oto-local      - Запуск парсера Otomoto локально (Kafka на localhost:9094)"
 	@echo "  run-spider         - Любой паук в Docker: SPIDER=autoscout24 MAKES=bmw ARGS=\"-a countries=DE\""
 	@echo "  probe              - Проверка паука на живом сайте без Kafka: SPIDER=autovit MAKES=dacia"
