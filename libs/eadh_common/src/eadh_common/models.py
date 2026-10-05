@@ -164,14 +164,17 @@ class Listing(SQLModel, table=True):
     __tablename__ = "listing"
     __table_args__ = (
         sa.UniqueConstraint("source", "source_listing_id", name="uq_listing_source_id"),
-        # выборка кандидатов на снятие: источник + марка (+ модель, год) среди активных
-        sa.Index("ix_listing_scope", "source", "status", "make_raw", "model_raw", "year"),
+        # выборка кандидатов на снятие: источник + категория + марка (+ модель, год) среди активных
+        sa.Index("ix_listing_scope", "source", "category", "status", "make_raw", "model_raw", "year"),
     )
 
     id: Optional[int] = Field(default=None, sa_column=sa.Column(BigIntPK, primary_key=True, autoincrement=True))
     source: str = Field(max_length=64)
     source_listing_id: str = Field(max_length=64)
     country_code: str = Field(max_length=2)
+    # Категория транспорта: car | motorcycle (eadh_common.messages.VEHICLE_CATEGORIES)
+    category: str = Field(default="car", max_length=16,
+                          sa_column_kwargs={"server_default": "car", "nullable": False})
     url: Optional[str] = None
     title: Optional[str] = None
 

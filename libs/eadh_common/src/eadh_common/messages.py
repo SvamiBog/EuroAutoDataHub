@@ -18,10 +18,17 @@ TOPIC_LISTING_OBSERVATIONS = "listing_observations"
 TOPIC_CRAWL_EVENTS = "crawl_events"
 TOPIC_DLQ = "ingest_dlq"
 
+# Категории транспорта: у одной площадки могут быть разделы (легковые, мотоциклы), объявления которых
+# не должны смешиваться ни в шардах, ни в снятии с публикации
+CATEGORY_CAR = "car"
+CATEGORY_MOTORCYCLE = "motorcycle"
+VEHICLE_CATEGORIES = (CATEGORY_CAR, CATEGORY_MOTORCYCLE)
+
 # Ключи фильтров шарда, по которым lifecycle выбирает покрываемые объявления:
-# country — страна объявления (площадки с несколькими странами), make/model — значения площадки,
-# year_from/year_to — год выпуска, price_from/price_to — цена в валюте площадки (границы включительно)
-SHARD_FILTER_KEYS = ("country", "make", "model", "year_from", "year_to", "price_from", "price_to")
+# category — категория транспорта (нет — легковые), country — страна объявления (площадки с несколькими
+# странами), make/model — значения площадки, year_from/year_to — год выпуска, price_from/price_to — цена
+# в валюте площадки (границы включительно)
+SHARD_FILTER_KEYS = ("category", "country", "make", "model", "year_from", "year_to", "price_from", "price_to")
 # Фильтры по атрибутам, которые меняются у объявления (цена): объявление может перейти в соседний шард
 VOLATILE_SHARD_FILTERS = ("price_from", "price_to")
 
@@ -62,6 +69,7 @@ class ListingObservation(_Message):
     country_code: str = Field(min_length=2, max_length=2)
     source_listing_id: str = Field(min_length=1, max_length=64)
     observed_at: datetime
+    category: Literal["car", "motorcycle"] = CATEGORY_CAR
 
     url: Optional[str] = None
     title: Optional[str] = None
@@ -135,8 +143,10 @@ class ShardFinished(_Message):
     @classmethod
     def _known_filters(cls, value: dict[str, Any]) -> dict[str, Any]:
         shard_key_for(value)  # проверяет ключи
-        if not value.get("make"):
-            raise ValueError("Шард должен быть ограничен маркой")
+        if not value.get("make") and value.get("category") in (None, CATEGORY_CAR):
+            raise ValueError("Шард легковых должен быть ограничен маркой")
+        if value.get("category") not in (None, *VEHICLE_CATEGORIES):
+            raise ValueError(f"Неизвестная категория шарда: {value['category']}")
         return value
 
 

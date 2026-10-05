@@ -12,6 +12,7 @@ class ListingObservationItem(scrapy.Item):
     country_code = scrapy.Field()  # str: Например, "PL"
     source_listing_id = scrapy.Field()  # str: ID объявления на площадке
     observed_at = scrapy.Field()  # iso_str: Время наблюдения (UTC)
+    category = scrapy.Field()  # str: car | motorcycle
 
     # Основная информация об объявлении
     url = scrapy.Field()  # str: Прямая ссылка на объявление

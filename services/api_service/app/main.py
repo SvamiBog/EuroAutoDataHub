@@ -9,7 +9,7 @@ import uvicorn
 from app.core.config import settings
 from app.core.security import get_cors_origins, require_api_key
 from app.core.middleware import LoggingMiddleware, ErrorHandlingMiddleware
-from app.routers import ads, analytics, anomalies, health, ml, stats, subscriptions
+from app.routers import admin, ads, analytics, anomalies, health, ml, stats, subscriptions
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -54,6 +54,8 @@ app.add_middleware(
 # /health и / открыты, данные /api/v1 — по ключу X-API-Key (если заданы API_KEYS)
 protected = [Depends(require_api_key)]
 app.include_router(health.router, prefix="/health", tags=["Health"])
+# Админка сбора данных: свой вход (ADMIN_USER, ADMIN_PASSWORD), в документацию API не входит
+app.include_router(admin.router, prefix="/admin", include_in_schema=False)
 app.include_router(ads.router, prefix="/api/v1/ads", tags=["Ads"], dependencies=protected)
 app.include_router(stats.router, prefix="/api/v1/stats", tags=["Statistics"], dependencies=protected)
 app.include_router(analytics.router, prefix="/api/v1/analytics", tags=["Analytics"], dependencies=protected)
@@ -71,6 +73,7 @@ async def root():
         "version": "1.0.0",
         "docs": "/docs",
         "health": "/health",
+        "admin": "/admin",
         "endpoints": {
             "ads": "/api/v1/ads",
             "statistics": "/api/v1/stats",

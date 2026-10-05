@@ -22,7 +22,7 @@ from sqlalchemy import func, or_, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
-from eadh_common.messages import VOLATILE_SHARD_FILTERS
+from eadh_common.messages import CATEGORY_CAR, VOLATILE_SHARD_FILTERS
 from eadh_common.models import (
     CrawlRun, CrawlShard, Listing, ListingEvent, ListingEventType, ListingStatus, ShardLifecycleStatus,
 )
@@ -53,7 +53,9 @@ class ShardOutcome:
 def shard_scope(shard: CrawlShard) -> list:
     """Условия на listing: какие объявления покрывает шард."""
     filters = shard.filters or {}
-    conditions = [Listing.source == shard.source, Listing.make_raw == str(filters["make"]).lower()]
+    conditions = [Listing.source == shard.source, Listing.category == (filters.get("category") or CATEGORY_CAR)]
+    if filters.get("make"):
+        conditions.append(Listing.make_raw == str(filters["make"]).lower())
     if filters.get("country"):
         conditions.append(Listing.country_code == str(filters["country"]).upper())
     if filters.get("model"):
@@ -86,7 +88,7 @@ async def volatile_shard_blocked(session: AsyncSession, shard: CrawlShard) -> Op
     )).scalars().all()
     for sibling in siblings:
         other = sibling.filters or {}
-        if other.get("make") == filters.get("make") and other.get("country") == filters.get("country"):
+        if all(other.get(key) == filters.get(key) for key in ("category", "make", "country")):
             return f"неполный соседний шард {sibling.shard_key}"
     return None
 

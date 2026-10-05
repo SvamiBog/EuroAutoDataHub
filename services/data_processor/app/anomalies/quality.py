@@ -4,7 +4,7 @@
 каждого прогона (правила зависят от текущего года и настроек). Цены объявлений с флагами
 не учитываются в витрине сегментов, аналитике и оценке справедливой цены.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from typing import Optional
 
@@ -43,6 +43,14 @@ class QualityRules:
     min_power_hp: int = 20
     max_power_hp: int = 2000
     max_engine_capacity_cm3: int = 10_000
+
+    def for_category(self, category: Optional[str]) -> "QualityRules":
+        """Пороги для категории транспорта. У мотоциклов мопед 50 см³ — это 3–4 л. с., скутер 125 см³ —
+        около 11 л. с., старый мопед может стоить 150 EUR, а объём больше 3000 см³ — опечатка."""
+        if category == "motorcycle":
+            return replace(self, min_price_eur=min(self.min_price_eur, 100.0), min_power_hp=1,
+                           max_power_hp=min(self.max_power_hp, 400), max_engine_capacity_cm3=3000)
+        return self
 
     @classmethod
     def from_settings(cls, config) -> "QualityRules":
@@ -85,7 +93,8 @@ CHECKED_COLUMNS = ("price", "currency", "price_eur", "year", "mileage_km", "engi
 
 def listing_flags(listing: Listing, rules: QualityRules, today: date) -> Optional[list[str]]:
     """Флаги для поля listing.quality_flags (None — нарушений нет)."""
-    return quality_flags(rules, today, **{name: getattr(listing, name) for name in CHECKED_COLUMNS}) or None
+    return quality_flags(rules.for_category(listing.category), today,
+                         **{name: getattr(listing, name) for name in CHECKED_COLUMNS}) or None
 
 
 async def refresh_quality_flags(session: AsyncSession, rules: QualityRules, today: date,
@@ -93,11 +102,12 @@ async def refresh_quality_flags(session: AsyncSession, rules: QualityRules, toda
     """Пересчитывает флаги активных объявлений; возвращает число изменённых. Коммит — у вызывающего."""
     columns = [getattr(Listing, name) for name in CHECKED_COLUMNS]
     result = await session.stream(
-        select(Listing.id, Listing.quality_flags, *columns).where(Listing.status == ListingStatus.ACTIVE.value)
+        select(Listing.id, Listing.quality_flags, Listing.category, *columns).where(Listing.status == ListingStatus.ACTIVE.value)
         .execution_options(yield_per=chunk_size))
     changes = []
     async for row in result:
-        flags = quality_flags(rules, today, **{name: getattr(row, name) for name in CHECKED_COLUMNS}) or None
+        flags = quality_flags(rules.for_category(row.category), today,
+                              **{name: getattr(row, name) for name in CHECKED_COLUMNS}) or None
         if (flags or None) != (row.quality_flags or None):
             changes.append({"listing_id": row.id, "flags": flags})
     for start in range(0, len(changes), chunk_size):

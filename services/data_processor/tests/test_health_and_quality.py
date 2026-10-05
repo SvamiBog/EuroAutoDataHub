@@ -215,6 +215,19 @@ class TestQualityRules:
         assert self.flags(engine_capacity_cm3=50000) == ["engine_capacity_implausible"]
 
 
+    def test_motorcycle_thresholds(self):
+        moto = self.RULES.for_category("motorcycle")
+        scooter = {"price": Decimal("1300"), "currency": "PLN", "price_eur": Decimal("300"), "year": 2015,
+                   "mileage_km": 12000, "engine_power_hp": 11, "engine_capacity_cm3": 125}
+        assert quality_flags(self.RULES, self.TODAY, **scooter) == ["price_too_low", "power_implausible"]
+        assert quality_flags(moto, self.TODAY, **scooter) == []
+        assert quality_flags(moto, self.TODAY, **{**scooter, "engine_power_hp": 3}) == []  # мопед 50 см³
+        assert quality_flags(moto, self.TODAY, **{**scooter, "engine_power_hp": 600}) == ["power_implausible"]
+        assert quality_flags(moto, self.TODAY, **{**scooter, "engine_capacity_cm3": 7000}) == \
+            ["engine_capacity_implausible"]
+        assert self.RULES.for_category("car") is self.RULES
+
+
 def test_ingest_sets_and_clears_flags(run, session_factory, fx):
     async def go():
         normalizer = Normalizer()
@@ -237,6 +250,7 @@ def test_refresh_quality_flags(run, session_factory):
                 make_listing(2, price_eur=Decimal("100")),
                 make_listing(3, quality_flags=["price_too_low"]),  # цену исправили — флаг снимается
                 make_listing(4, status="delisted", price_eur=Decimal("100")),  # снятые не проверяются
+                make_listing(5, category="motorcycle", engine_power_hp=11, quality_flags=["power_implausible"]),
             ])
             await session.commit()
             changed = await refresh_quality_flags(session, QualityRules(), date(2026, 9, 1))
@@ -245,8 +259,9 @@ def test_refresh_quality_flags(run, session_factory):
             flags = dict((await session.execute(select(Listing.id, Listing.quality_flags))).tuples().all())
         return changed, again, flags
     changed, again, flags = run(go())
-    assert (changed, again) == (2, 0)
-    assert flags == {1: None, 2: ["price_too_low"], 3: None, 4: None}
+    assert (changed, again) == (3, 0)
+    # у мотоцикла 11 л. с. — норма (пороги категории): флаг снимается
+    assert flags == {1: None, 2: ["price_too_low"], 3: None, 4: None, 5: None}
 
 
 def test_lifecycle_report_still_counts_flagged(run, session_factory, fx, telegram):
