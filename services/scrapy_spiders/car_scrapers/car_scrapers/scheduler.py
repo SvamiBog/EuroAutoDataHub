@@ -18,6 +18,10 @@
   CRAWL_ARGS      дополнительные аргументы scrapy crawl, например "-a makes=audi,bmw"
   RUN_ON_START    true — запустить обход сразу при старте
   CONTROL_PORT    порт управления (по умолчанию 8001; 0 — выключено)
+  STATE_FILE      файл состояния: последний запуск переживает перезапуск контейнера и компьютера
+                  (по умолчанию /data/state/scheduler.json; пусто — не сохранять)
+  CATCH_UP_MISSED true (по умолчанию) — при старте догнать пропущенный ночной обход, если компьютер
+                  был выключен во время CRAWL_AT
 """
 import json
 import logging
@@ -49,6 +53,21 @@ def next_run(now: datetime, at: time, tz: ZoneInfo) -> datetime:
     return candidate
 
 
+def previous_run(now: datetime, at: time, tz: ZoneInfo) -> datetime:
+    """Последний момент at (по местному времени tz) не позже now."""
+    local_now = now.astimezone(tz)
+    candidate = datetime.combine(local_now.date(), at, tzinfo=tz)
+    if candidate > local_now:
+        candidate = datetime.combine(local_now.date() - timedelta(days=1), at, tzinfo=tz)
+    return candidate
+
+
+def missed_run(last_started: Optional[datetime], now: datetime, at: time, tz: ZoneInfo) -> bool:
+    """Ночной обход пропущен: последний завершённый запуск (любой) начат раньше последнего момента
+    по расписанию. Без истории (первый старт) — не пропущен: обход не начинается неожиданно."""
+    return last_started is not None and last_started < previous_run(now, at, tz)
+
+
 def crawl_commands(spiders: list[str], extra_args: str = "") -> list[list[str]]:
     return [["scrapy", "crawl", spider, *shlex.split(extra_args)] for spider in spiders]
 
@@ -74,8 +93,9 @@ class Scheduler:
     """Ежедневные обходы и запуск по запросу; обходы никогда не идут параллельно."""
 
     def __init__(self, spiders: list[str], commands: list[list[str]], at: time, tz: ZoneInfo,
-                 stop: Optional[threading.Event] = None, runner=run_crawls):
+                 stop: Optional[threading.Event] = None, runner=run_crawls, state_file: Optional[str] = None):
         self.spiders, self.commands, self.at, self.tz = spiders, commands, at, tz
+        self.state_file = state_file
         self.stop = stop or threading.Event()
         self.runner = runner
         self.wake = threading.Event()  # будит ожидание: запрос запуска или остановка
@@ -84,6 +104,56 @@ class Scheduler:
         self.running: Optional[dict] = None  # {"trigger", "started_at"}
         self.last: Optional[dict] = None  # {"trigger", "started_at", "finished_at", "exit_codes"}
         self.next_run_at: Optional[datetime] = None
+        # запуск, который шёл, когда планировщик остановили (выключили компьютер посреди обхода)
+        self.interrupted: Optional[dict] = None
+        self._load_state()
+
+    # --- Состояние на диске ---
+
+    def _load_state(self) -> None:
+        if not self.state_file or not os.path.exists(self.state_file):
+            return
+        try:
+            with open(self.state_file, encoding="utf-8") as f:
+                data = json.load(f)
+            self.last = self._parse(data.get("last"))
+            self.interrupted = self._parse(data.get("running"))
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            logger.warning(f"Файл состояния {self.state_file} не прочитан: {error}")
+
+    @staticmethod
+    def _parse(entry: Optional[dict]) -> Optional[dict]:
+        if not entry:
+            return None
+        return dict(entry, started_at=datetime.fromisoformat(entry["started_at"]),
+                    finished_at=datetime.fromisoformat(entry["finished_at"]) if entry.get("finished_at") else None)
+
+    @staticmethod
+    def _dump(entry: Optional[dict]) -> Optional[dict]:
+        if not entry:
+            return None
+        return dict(entry, started_at=_iso(entry["started_at"]), finished_at=_iso(entry.get("finished_at")))
+
+    def _save_state(self) -> None:
+        """Вызывается под self._lock."""
+        if not self.state_file:
+            return
+        data = {"last": self._dump(self.last), "running": self._dump(self.running)}
+        try:
+            os.makedirs(os.path.dirname(self.state_file) or ".", exist_ok=True)
+            tmp = self.state_file + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False)
+            os.replace(tmp, self.state_file)
+        except OSError as error:
+            logger.warning(f"Файл состояния {self.state_file} не записан: {error}")
+
+    def missed(self, now: Optional[datetime] = None) -> bool:
+        """Догнать при старте: ночной обход пропущен или прерван на середине."""
+        if self.interrupted and (not self.last or self.interrupted["started_at"] > self.last["started_at"]):
+            return True
+        last_started = self.last["started_at"] if self.last else None
+        return missed_run(last_started, now or datetime.now(self.tz), self.at, self.tz)
 
     def request_run(self) -> bool:
         """Запросить обход сейчас. False — обход уже идёт или уже запрошен."""
@@ -106,14 +176,15 @@ class Scheduler:
                 "next_run_at": _iso(self.next_run_at),
                 "requested": self._requested,
                 "running": dict(self.running, started_at=_iso(self.running["started_at"])) if self.running else None,
-                "last": dict(self.last, started_at=_iso(self.last["started_at"]),
-                             finished_at=_iso(self.last["finished_at"])) if self.last else None,
+                "last": self._dump(self.last),
+                "interrupted": self._dump(self.interrupted),
             }
 
     def run_once(self, trigger: str) -> list[int]:
         with self._lock:
             self._requested = False
             self.running = {"trigger": trigger, "started_at": datetime.now(timezone.utc)}
+            self._save_state()
         logger.info(f"Обход ({trigger}): {self.spiders}")
         codes = []
         try:
@@ -122,6 +193,8 @@ class Scheduler:
             with self._lock:
                 self.last = dict(self.running, finished_at=datetime.now(timezone.utc), exit_codes=codes)
                 self.running = None
+                self.interrupted = None
+                self._save_state()
         return codes
 
     def loop(self) -> None:
@@ -180,7 +253,8 @@ def main(stop: Optional[threading.Event] = None) -> None:
     spiders = [s.strip() for s in os.getenv("CRAWL_SPIDERS", "otomoto_moto").split(",") if s.strip()]
     at = parse_time(os.getenv("CRAWL_AT", "02:00"))
     tz = ZoneInfo(os.getenv("CRAWL_TZ", "Europe/Warsaw"))
-    scheduler = Scheduler(spiders, crawl_commands(spiders, os.getenv("CRAWL_ARGS", "")), at, tz, stop)
+    scheduler = Scheduler(spiders, crawl_commands(spiders, os.getenv("CRAWL_ARGS", "")), at, tz, stop,
+                          state_file=os.getenv("STATE_FILE", "/data/state/scheduler.json") or None)
 
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_: scheduler.shutdown())
@@ -191,6 +265,9 @@ def main(stop: Optional[threading.Event] = None) -> None:
     logger.info(f"Планировщик: пауки {spiders}, ежедневно в {at:%H:%M} ({tz.key})")
     if os.getenv("RUN_ON_START", "false").lower() == "true":
         scheduler.run_once("start")
+    elif os.getenv("CATCH_UP_MISSED", "true").lower() == "true" and scheduler.missed():
+        logger.info("Ночной обход пропущен или прерван — запускаю сейчас")
+        scheduler.run_once("catch_up")
     scheduler.loop()
     if server:
         server.shutdown()
