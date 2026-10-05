@@ -37,7 +37,7 @@ from ..utils.make_loader import DEFAULT_MAKES_FILE, MakeLoader, parse_makes_arg
 from ..utils.raw_store import RawResponseStore
 
 # Порядок ключей совпадает с eadh_common.messages.SHARD_FILTER_KEYS (проверяется контрактным тестом)
-SHARD_FILTER_KEYS = ("country", "make", "model", "year_from", "year_to", "price_from", "price_to")
+SHARD_FILTER_KEYS = ("category", "country", "make", "model", "year_from", "year_to", "price_from", "price_to")
 
 
 def slugify(value: Optional[str]) -> Optional[str]:
@@ -52,7 +52,8 @@ def slugify(value: Optional[str]) -> Optional[str]:
 @dataclass(frozen=True)
 class Shard:
     """Сегмент обхода: марка и (после дробления) диапазоны лет выпуска и цены; страна — для площадок
-    с несколькими странами. Цена — в валюте площадки, границы включительно."""
+    с несколькими странами; категория транспорта — для разделов площадки кроме легковых (тогда марки
+    может не быть: шард — весь раздел). Цена — в валюте площадки, границы включительно."""
 
     make: Optional[str] = None
     year_from: Optional[int] = None
@@ -61,6 +62,7 @@ class Shard:
     model: Optional[str] = None
     price_from: Optional[int] = None
     price_to: Optional[int] = None
+    category: Optional[str] = None
 
     @property
     def filters(self) -> dict:
@@ -115,6 +117,8 @@ class ShardedSpider(scrapy.Spider):
     ITEMS_PER_PAGE: int = 50
     MAKES_FILE: Path = DEFAULT_MAKES_FILE
     MIN_YEAR = 1900
+    # Верхний предел страниц на шард для площадки (меньше MAX_PAGES_PER_SHARD — шарды дробятся мельче)
+    MAX_SHARD_PAGES: Optional[int] = None
     # Сколько объявлений не из шарда допускается на странице (например, продвигаемые): больше — фильтр
     # площадкой не применён, страница неудачная. Такие объявления в полноту шарда не засчитываются
     MISMATCH_TOLERANCE = 0
@@ -134,6 +138,8 @@ class ShardedSpider(scrapy.Spider):
         spider.max_pauses = settings.getint('MAX_PAUSES', 5)
         spider.min_shard_completeness = settings.getfloat('MIN_MAKE_COMPLETENESS', 0.95)
         spider.max_pages_per_shard = settings.getint('MAX_PAGES_PER_SHARD', 500)
+        if cls.MAX_SHARD_PAGES:
+            spider.max_pages_per_shard = min(spider.max_pages_per_shard, cls.MAX_SHARD_PAGES)
         spider.max_consecutive_failed_shards = settings.getint('MAX_CONSECUTIVE_FAILED_SHARDS', 5)
         spider.progress_enabled = cls._resolve_progress_setting(settings.get('PROGRESS_BAR', 'auto'))
 
@@ -170,9 +176,13 @@ class ShardedSpider(scrapy.Spider):
 
         self.scraped_ids = set()
 
-        # Список марок (все марки справочника площадки или только переданные через -a makes=...)
-        make_loader = MakeLoader(self.logger, makes_file=self.MAKES_FILE)
-        self.makes_list = make_loader.get_makes(only=parse_makes_arg(makes))
+        # Список марок (все марки справочника площадки или только переданные через -a makes=...);
+        # без справочника (MAKES_FILE = None) — только переданные
+        if self.MAKES_FILE is None:
+            self.makes_list = list(parse_makes_arg(makes) or [])
+        else:
+            make_loader = MakeLoader(self.logger, makes_file=self.MAKES_FILE)
+            self.makes_list = make_loader.get_makes(only=parse_makes_arg(makes))
         self.shard_queue = deque(self.initial_shards())
         self.shards_planned = len(self.shard_queue)
         self.shards_done = 0
@@ -281,8 +291,8 @@ class ShardedSpider(scrapy.Spider):
 
     async def start(self) -> AsyncGenerator[Request, None]:
         """Асинхронный стартовый метод для запуска парсера"""
-        if not self.makes_list:
-            self.logger.error("Нет марок для парсинга. Проверьте справочник марок или аргумент makes.")
+        if not self.shard_queue:
+            self.logger.error("Нет шардов для парсинга. Проверьте справочник марок или аргумент makes.")
             return
 
         if self.raw_store:
