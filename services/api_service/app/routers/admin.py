@@ -241,6 +241,7 @@ form.inline{display:inline;margin:0}
 button.link{background:none;color:var(--accent);padding:0;font-weight:600}
 td.wrap{white-space:normal;min-width:320px}
 table.problems{min-width:600px}
+details.resolved{margin-top:4px}details.resolved summary{cursor:pointer;color:var(--muted);padding:6px 0}
 """
 
 
@@ -276,6 +277,11 @@ async def admin_home(msg: Optional[str] = None, ok: bool = True, session: AsyncS
         select(Anomaly).where(Anomaly.kind.in_(PROBLEM_KINDS), Anomaly.entity_type.in_(PROBLEM_ENTITIES),
                               Anomaly.status == AnomalyStatus.NEW.value, Anomaly.detected_on >= since)
         .order_by(Anomaly.detected_on.desc(), Anomaly.id.desc()).limit(30))).scalars().all()
+    # решённые за те же дни: «Решено» можно отменить
+    resolved_problems = (await session.execute(
+        select(Anomaly).where(Anomaly.kind.in_(PROBLEM_KINDS), Anomaly.entity_type.in_(PROBLEM_ENTITIES),
+                              Anomaly.status == AnomalyStatus.RESOLVED.value, Anomaly.detected_on >= since)
+        .order_by(Anomaly.status_changed_at.desc(), Anomaly.id.desc()).limit(30))).scalars().all()
     backup = backup_status()
 
     # Планировщик
@@ -362,6 +368,18 @@ async def admin_home(msg: Optional[str] = None, ok: bool = True, session: AsyncS
         + '</tbody></table></div><p class="muted">«Решено» скрывает находку; если условие повторится, '
           'она появится снова.</p>') if problem_rows else \
         '<div class="notice ok">Проблем со сбором нет.</div>'
+    if resolved_problems:
+        resolved_rows = "".join(
+            f'<tr><td><span class="badge {severity_badge.get(a.severity, ("warn", a.severity))[0]}">'
+            f'{severity_badge.get(a.severity, ("warn", a.severity))[1]}</span></td>'
+            f'<td>{a.detected_on.strftime("%d.%m.%Y")}</td><td class="wrap">{escape(a.message)}</td>'
+            f'<td>решено {_when(a.status_changed_at)}</td>'
+            f'<td><form method="post" action="/admin/problems/{a.id}/reopen" class="inline">'
+            f'<button class="link" type="submit">Вернуть</button></form></td></tr>'
+            for a in resolved_problems)
+        problems_block += (f'<details class="resolved"><summary>Решённые за {PROBLEM_DAYS} дней '
+                           f'({len(resolved_problems)})</summary><div class="table"><table class="problems"><tbody>'
+                           f'{resolved_rows}</tbody></table></div></details>')
 
     notice = ""
     if msg:
@@ -491,7 +509,22 @@ async def admin_resolve_problem(anomaly_id: int, request: Request, session: Asyn
     anomaly.status = AnomalyStatus.RESOLVED.value
     anomaly.status_changed_at = datetime.now(timezone.utc)
     await session.commit()
-    return RedirectResponse(f"/admin?msg={quote('Находка отмечена как решённая')}&ok=true",
+    message = "Находка отмечена как решённая. Вернуть — в списке «Решённые» под проблемами"
+    return RedirectResponse(f"/admin?msg={quote(message)}&ok=true", status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/problems/{anomaly_id}/reopen")
+async def admin_reopen_problem(anomaly_id: int, request: Request, session: AsyncSession = Depends(get_session)):
+    """Отменить «Решено»: находка снова в «Проблемах сбора»."""
+    if not _same_origin(request):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Запрос не со страницы админки")
+    anomaly = await session.get(Anomaly, anomaly_id)
+    if anomaly is None or anomaly.kind not in PROBLEM_KINDS:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Находка не найдена")
+    anomaly.status = AnomalyStatus.NEW.value
+    anomaly.status_changed_at = datetime.now(timezone.utc)
+    await session.commit()
+    return RedirectResponse(f"/admin?msg={quote('Находка возвращена в проблемы сбора')}&ok=true",
                             status.HTTP_303_SEE_OTHER)
 
 

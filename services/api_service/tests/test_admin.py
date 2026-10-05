@@ -126,9 +126,19 @@ def test_problems_from_health_and_resolve(client, admin_on):
     response = client.post(f"/admin/problems/{anomaly_id}/resolve", auth=AUTH, follow_redirects=False)
     assert response.status_code == 303
     html = client.get("/admin", auth=AUTH).text
-    assert "incomplete_shards message" not in html and "Проблем со сбором нет" in html
+    assert "Проблем со сбором нет" in html
+    # решённая — в свёрнутом списке «Решённые» с кнопкой «Вернуть»
+    assert "Решённые за 14 дней (1)" in html and f"/admin/problems/{anomaly_id}/reopen" in html
+    response = client.post(f"/admin/problems/{anomaly_id}/reopen", auth=AUTH, follow_redirects=False)
+    assert response.status_code == 303
+    html = client.get("/admin", auth=AUTH).text
+    assert "Проблем со сбором нет" not in html and "Решённые за" not in html
+    assert f"/admin/problems/{anomaly_id}/resolve" in html
+    assert client.post(f"/admin/problems/{anomaly_id}/reopen", auth=AUTH,
+                       headers={"Origin": "https://evil.example"}).status_code == 403
     # находки по объявлениям (цены) сюда не относятся
     assert client.post("/admin/problems/1/resolve", auth=AUTH).status_code == 404
+    assert client.post("/admin/problems/1/reopen", auth=AUTH).status_code == 404
 
 
 def test_scheduler_problems(client, admin_on, monkeypatch):
