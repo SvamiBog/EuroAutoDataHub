@@ -8,7 +8,7 @@ from decimal import Decimal
 from sqlmodel import select
 
 from eadh_common.models import (
-    AlertSubscription, Anomaly, ListingEvent, SegmentDailyStats, VehicleMake, VehicleModel,
+    AlertSubscription, Anomaly, CrawlRun, ListingEvent, SegmentDailyStats, VehicleMake, VehicleModel,
 )
 
 from app.aggregates import segment_key
@@ -69,6 +69,38 @@ def test_relisted_by_vin_and_by_attributes(run, session_factory):
     assert {f.listing_id: f.details["previous_listing_id"] for f in found} == {2: 1, 4: 3}
     vin = next(f for f in found if f.listing_id == 2)
     assert vin.details["match"] == "VIN" and "(-5%)" in vin.message and "old-vin" in vin.message
+
+
+def test_relisted_ignores_listing_seen_in_the_same_run(run, session_factory):
+    # обход пишется пачками: объявление продавца из ранней пачки «последний раз видели» на секунды раньше
+    # появления второго такого же автомобиля этого продавца, но оба активны — это не перевыставление
+    started = MORNING - timedelta(minutes=10)
+
+    async def go():
+        async with session_factory() as session:
+            session.add_all([
+                CrawlRun(id="run-1", source="otomoto.pl", started_at=started - timedelta(days=1)),
+                CrawlRun(id="run-2", source="otomoto.pl", started_at=started),
+                make_listing(1, source_listing_id="same-run-a", seller_ref="s1", model_id=7, fuel_type="diesel",
+                             mileage_km=100000, first_seen_at=MORNING, last_seen_at=MORNING),
+                make_listing(2, source_listing_id="same-run-b", seller_ref="s1", model_id=7, fuel_type="diesel",
+                             mileage_km=100500, first_seen_at=MORNING + timedelta(seconds=2),
+                             last_seen_at=MORNING + timedelta(seconds=2)),
+                # пропало в прошлом обходе — перевыставление
+                make_listing(3, source_listing_id="gone", seller_ref="s2", model_id=7, fuel_type="diesel",
+                             mileage_km=50000, first_seen_at=started - timedelta(days=20),
+                             last_seen_at=started - timedelta(days=1)),
+                make_listing(4, source_listing_id="relisted", seller_ref="s2", model_id=7, fuel_type="diesel",
+                             mileage_km=50000, first_seen_at=MORNING, last_seen_at=MORNING),
+            ])
+            await session.flush()
+            session.add_all([ListingEvent(listing_id=i, event_type="new", ts=MORNING, run_id="run-2")
+                             for i in (1, 2, 4)])
+            await session.commit()
+            return by_rule(await behavior_findings(session, DAY, CONFIG))
+
+    found = run(go()).get("relisted_new_id", [])
+    assert {f.listing_id: f.details["previous_listing_id"] for f in found} == {4: 3}
 
 
 def test_frequent_price_changes_and_mileage_rollback(run, session_factory):

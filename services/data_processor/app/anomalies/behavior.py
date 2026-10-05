@@ -16,7 +16,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 from sqlmodel import select
 
-from eadh_common.models import AnomalyKind, AnomalySeverity, Listing, ListingEvent, ListingEventType
+from eadh_common.models import (
+    AnomalyKind, AnomalySeverity, CrawlRun, Listing, ListingEvent, ListingEventType,
+)
 
 from app.anomalies.store import Finding
 
@@ -58,10 +60,17 @@ async def relisted_findings(session: AsyncSession, day: date, config) -> list[Fi
     start, end = _day_bounds(day)
     new, old = aliased(Listing), aliased(Listing)
     window_start = start - timedelta(days=config.BEHAVIOR_RELIST_WINDOW_DAYS)
+    # Старое объявление должно пропасть до обхода, в котором появилось новое: обход пишется пачками с разницей
+    # в секунды, и объявление, увиденное в том же обходе чуть раньше нового, ещё активно
+    appeared_run_start = (
+        select(CrawlRun.started_at).join(ListingEvent, ListingEvent.run_id == CrawlRun.id)
+        .where(ListingEvent.listing_id == new.id, ListingEvent.event_type == ListingEventType.NEW.value)
+        .limit(1).correlate(new).scalar_subquery())
     common = and_(new.first_seen_at >= start, new.first_seen_at < end,
                   old.id != new.id, old.source == new.source,
                   old.first_seen_at < new.first_seen_at,
-                  old.last_seen_at < new.first_seen_at, old.last_seen_at >= window_start)
+                  old.last_seen_at < func.coalesce(appeared_run_start, new.first_seen_at),
+                  old.last_seen_at >= window_start)
     mileage_diff = func.abs(old.mileage_km - new.mileage_km)
     # два запроса вместо OR в условии соединения: так PostgreSQL может использовать hash join
     by_vin = (await session.execute(

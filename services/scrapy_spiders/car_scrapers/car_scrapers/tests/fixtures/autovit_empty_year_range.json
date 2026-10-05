@@ -1,0 +1,301 @@
+{
+ "data": {
+  "advertSearch": {
+   "totalCount": 4,
+   "edges": [
+    {
+     "node": {
+      "id": "7060846203",
+      "title": "Dacia 1300",
+      "createdAt": "2026-09-12T07:14:42Z",
+      "url": "https://www.autovit.ro/autoturisme/anunt/dacia-1300-ID7HQAEb.html",
+      "location": {
+       "city": {
+        "name": "Bucuresti",
+        "__typename": "AdministrativeLevel"
+       },
+       "region": {
+        "name": "Bucuresti",
+        "__typename": "AdministrativeLevel"
+       },
+       "__typename": "Location"
+      },
+      "price": {
+       "amount": {
+        "units": 7000,
+        "currencyCode": "EUR"
+       }
+      },
+      "parameters": [
+       {
+        "key": "make",
+        "value": "dacia"
+       },
+       {
+        "key": "fuel_type",
+        "value": "petrol"
+       },
+       {
+        "key": "gearbox",
+        "value": "manual"
+       },
+       {
+        "key": "mileage",
+        "value": "60000"
+       },
+       {
+        "key": "engine_capacity",
+        "value": "1300"
+       },
+       {
+        "key": "color",
+        "value": "red"
+       },
+       {
+        "key": "engine_power",
+        "value": "54"
+       },
+       {
+        "key": "model",
+        "value": "1300"
+       },
+       {
+        "key": "year",
+        "value": "1981"
+       }
+      ],
+      "thumbnail": {
+       "__typename": "Image",
+       "x1": "https://ireland.apollo.olxcdn.com/v1/files/c5auu9997d4k3-AUTOVITRO/image;s=320x240",
+       "x2": "https://ireland.apollo.olxcdn.com/v1/files/c5auu9997d4k3-AUTOVITRO/image;s=640x480"
+      },
+      "sellerLink": {
+       "id": "896651"
+      }
+     }
+    },
+    {
+     "node": {
+      "id": "7060895644",
+      "title": "Dacia 1310",
+      "createdAt": "2026-09-20T16:52:28Z",
+      "url": "https://www.autovit.ro/autoturisme/anunt/dacia-1310-ID7HQNwC.html",
+      "location": {
+       "city": {
+        "name": "Petrosani",
+        "__typename": "AdministrativeLevel"
+       },
+       "region": {
+        "name": "Hunedoara",
+        "__typename": "AdministrativeLevel"
+       },
+       "__typename": "Location"
+      },
+      "price": {
+       "amount": {
+        "units": 5000,
+        "currencyCode": "EUR"
+       }
+      },
+      "parameters": [
+       {
+        "key": "make",
+        "value": "dacia"
+       },
+       {
+        "key": "fuel_type",
+        "value": "petrol"
+       },
+       {
+        "key": "gearbox",
+        "value": "manual"
+       },
+       {
+        "key": "mileage",
+        "value": "9797"
+       },
+       {
+        "key": "engine_capacity",
+        "value": "1397"
+       },
+       {
+        "key": "color",
+        "value": "white"
+       },
+       {
+        "key": "engine_power",
+        "value": "60"
+       },
+       {
+        "key": "model",
+        "value": "1310"
+       },
+       {
+        "key": "year",
+        "value": "1986"
+       }
+      ],
+      "thumbnail": {
+       "__typename": "Image",
+       "x1": "https://ireland.apollo.olxcdn.com/v1/files/of344cxinmio1-AUTOVITRO/image;s=320x240",
+       "x2": "https://ireland.apollo.olxcdn.com/v1/files/of344cxinmio1-AUTOVITRO/image;s=640x480"
+      },
+      "sellerLink": {
+       "id": "4848350"
+      }
+     }
+    },
+    {
+     "node": {
+      "id": "7060340812",
+      "title": "Dacia 1100",
+      "createdAt": "2026-09-09T08:07:13Z",
+      "url": "https://www.autovit.ro/autoturisme/anunt/dacia-1100-ID7HOtaI.html",
+      "location": {
+       "city": {
+        "name": "Ramnicu Valcea",
+        "__typename": "AdministrativeLevel"
+       },
+       "region": {
+        "name": "Valcea",
+        "__typename": "AdministrativeLevel"
+       },
+       "__typename": "Location"
+      },
+      "price": {
+       "amount": {
+        "units": 8900,
+        "currencyCode": "EUR"
+       }
+      },
+      "parameters": [
+       {
+        "key": "make",
+        "value": "dacia"
+       },
+       {
+        "key": "fuel_type",
+        "value": "petrol"
+       },
+       {
+        "key": "gearbox",
+        "value": "manual"
+       },
+       {
+        "key": "country_origin",
+        "value": "ro"
+       },
+       {
+        "key": "mileage",
+        "value": "37974"
+       },
+       {
+        "key": "engine_capacity",
+        "value": "1108"
+       },
+       {
+        "key": "color",
+        "value": "red"
+       },
+       {
+        "key": "transmission",
+        "value": "rear-wheel"
+       },
+       {
+        "key": "engine_power",
+        "value": "46"
+       },
+       {
+        "key": "model",
+        "value": "1100"
+       },
+       {
+        "key": "year",
+        "value": "1971"
+       }
+      ],
+      "thumbnail": {
+       "__typename": "Image",
+       "x1": "https://ireland.apollo.olxcdn.com/v1/files/lgtoj60o5eye-AUTOVITRO/image;s=320x240",
+       "x2": "https://ireland.apollo.olxcdn.com/v1/files/lgtoj60o5eye-AUTOVITRO/image;s=640x480"
+      },
+      "sellerLink": {
+       "id": "1191957"
+      }
+     }
+    },
+    {
+     "node": {
+      "id": "7059103720",
+      "title": "Dacia 1410",
+      "createdAt": "2026-09-08T09:51:11Z",
+      "url": "https://www.autovit.ro/autoturisme/anunt/dacia-1410-ID7HJhlC.html",
+      "location": {
+       "city": {
+        "name": "Constanta",
+        "__typename": "AdministrativeLevel"
+       },
+       "region": {
+        "name": "Constanta",
+        "__typename": "AdministrativeLevel"
+       },
+       "__typename": "Location"
+      },
+      "price": {
+       "amount": {
+        "units": 17500,
+        "currencyCode": "EUR"
+       }
+      },
+      "parameters": [
+       {
+        "key": "make",
+        "value": "dacia"
+       },
+       {
+        "key": "fuel_type",
+        "value": "petrol"
+       },
+       {
+        "key": "gearbox",
+        "value": "manual"
+       },
+       {
+        "key": "mileage",
+        "value": "58800"
+       },
+       {
+        "key": "engine_capacity",
+        "value": "1398"
+       },
+       {
+        "key": "color",
+        "value": "red"
+       },
+       {
+        "key": "engine_power",
+        "value": "95"
+       },
+       {
+        "key": "model",
+        "value": "1410"
+       },
+       {
+        "key": "year",
+        "value": "1991"
+       }
+      ],
+      "thumbnail": {
+       "__typename": "Image",
+       "x1": "https://ireland.apollo.olxcdn.com/v1/files/d7he1ae2ulx92-AUTOVITRO/image;s=320x240",
+       "x2": "https://ireland.apollo.olxcdn.com/v1/files/d7he1ae2ulx92-AUTOVITRO/image;s=640x480"
+      },
+      "sellerLink": {
+       "id": "1465229"
+      }
+     }
+    }
+   ]
+  }
+ }
+}

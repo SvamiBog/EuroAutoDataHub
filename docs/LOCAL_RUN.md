@@ -29,6 +29,9 @@ curl -LsSf https://astral.sh/uv/install.sh | sh    # Linux, macOS, WSL; без s
 
 Откройте новый терминал и проверьте: `uv --version`.
 
+Для тестов на хосте (`make test`) LightGBM нужна библиотека OpenMP: `sudo apt install -y libgomp1` (Linux, WSL),
+`brew install libomp` (macOS). Без неё тесты data_processor падают с `libgomp.so.1: cannot open shared object file`.
+
 ## 2. Скачать и настроить
 
 ```bash
@@ -67,7 +70,7 @@ make logs-ingestor        # в другом окне: как объявлени�
 
 ```bash
 make bi-up          # Metabase стартует 1–2 минуты
-make bi-provision   # подключение к БД и 5 дашбордов; повторный запуск обновляет их
+make bi-provision   # подключение к БД и 7 дашбордов; повторный запуск обновляет их
 ```
 
 - Metabase: http://localhost:3000, вход — `MB_ADMIN_EMAIL` и `MB_ADMIN_PASSWORD` из `.env`.
@@ -100,6 +103,10 @@ make probe SPIDER=autoscout24 MAKES=bmw ARGS="-a countries=DE" PAGES=1
 ```
 
 Отчёт проверяет, что есть полный шард с объявлениями, поля заполнены у 90 %+ объявлений и нет ошибок API.
+`PAGES` — лимит страниц на шард: шард больше лимита дробится, поэтому проба обходит всю марку. Для autovit
+и standvirtual это десятки запросов, для AutoScout24 (BMW в DE) — тысячи. Пробу можно остановить Ctrl+C, когда
+в логе видно сотни полных шардов без ошибок, и построить отчёт по собранному:
+`cd services/scrapy_spiders/car_scrapers && uv run python -m car_scrapers.probe probe_autoscout24.jsonl`.
 Если всё прошло, добавьте паука в `CRAWL_SPIDERS` в `.env` и выполните `make dc-up`. Разовый обход в Docker:
 `make run-spider SPIDER=autovit MAKES=dacia`. Подробности — в [SOURCES.md](SOURCES.md).
 

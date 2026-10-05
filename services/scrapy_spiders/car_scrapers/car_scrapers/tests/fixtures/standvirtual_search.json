@@ -1,0 +1,242 @@
+{
+ "data": {
+  "advertSearch": {
+   "totalCount": 89,
+   "edges": [
+    {
+     "node": {
+      "id": "8097622419",
+      "title": "Renault Clio dCi 75 Stop & Start Life",
+      "createdAt": "2026-09-27T19:36:11Z",
+      "url": "https://www.standvirtual.com/carros/anuncio/renault-clio-ver-dci-75-stop-start-life-ID8Q0Nwd.html",
+      "location": {
+       "city": {
+        "name": "Guimarães",
+        "__typename": "AdministrativeLevel"
+       },
+       "region": {
+        "name": "Braga",
+        "__typename": "AdministrativeLevel"
+       },
+       "__typename": "Location"
+      },
+      "price": {
+       "amount": {
+        "units": 7999,
+        "currencyCode": "EUR"
+       }
+      },
+      "parameters": [
+       {
+        "key": "make",
+        "value": "renault"
+       },
+       {
+        "key": "fuel_type",
+        "value": "diesel"
+       },
+       {
+        "key": "gearbox",
+        "value": "manual"
+       },
+       {
+        "key": "mileage",
+        "value": "177344"
+       },
+       {
+        "key": "engine_capacity",
+        "value": "1461"
+       },
+       {
+        "key": "color",
+        "value": "silver"
+       },
+       {
+        "key": "transmission",
+        "value": "front-wheel-drive"
+       },
+       {
+        "key": "engine_power",
+        "value": "75"
+       },
+       {
+        "key": "first_registration_year",
+        "value": "2015"
+       },
+       {
+        "key": "model",
+        "value": "clio"
+       },
+       {
+        "key": "version",
+        "value": "ver-dci-75-stop-start-life"
+       }
+      ],
+      "thumbnail": {
+       "__typename": "Image",
+       "x1": "https://ireland.apollo.olxcdn.com/v1/files/n1bwsf2dftje-STDVTLPT/image;s=320x240",
+       "x2": "https://ireland.apollo.olxcdn.com/v1/files/n1bwsf2dftje-STDVTLPT/image;s=640x480"
+      },
+      "sellerLink": {
+       "id": "10728934"
+      }
+     }
+    },
+    {
+     "node": {
+      "id": "8097687247",
+      "title": "Renault Captur 1.5 dCi",
+      "createdAt": "2026-09-22T18:40:24Z",
+      "url": "https://www.standvirtual.com/carros/anuncio/renault-captur-ver-1-5-dci-ID8Q14mP.html",
+      "location": {
+       "city": {
+        "name": "Charneca de Caparica e Sobreda",
+        "__typename": "AdministrativeLevel"
+       },
+       "region": {
+        "name": "Setúbal",
+        "__typename": "AdministrativeLevel"
+       },
+       "__typename": "Location"
+      },
+      "price": {
+       "amount": {
+        "units": 10900,
+        "currencyCode": "EUR"
+       }
+      },
+      "parameters": [
+       {
+        "key": "make",
+        "value": "renault"
+       },
+       {
+        "key": "fuel_type",
+        "value": "diesel"
+       },
+       {
+        "key": "gearbox",
+        "value": "manual"
+       },
+       {
+        "key": "mileage",
+        "value": "105606"
+       },
+       {
+        "key": "engine_capacity",
+        "value": "1461"
+       },
+       {
+        "key": "color",
+        "value": "white"
+       },
+       {
+        "key": "transmission",
+        "value": "front-wheel-drive"
+       },
+       {
+        "key": "engine_power",
+        "value": "90"
+       },
+       {
+        "key": "first_registration_year",
+        "value": "2015"
+       },
+       {
+        "key": "model",
+        "value": "captur"
+       },
+       {
+        "key": "version",
+        "value": "ver-1-5-dci"
+       }
+      ],
+      "thumbnail": {
+       "__typename": "Image",
+       "x1": "https://ireland.apollo.olxcdn.com/v1/files/yvhdx9cv5lr53-STDVTLPT/image;s=320x240",
+       "x2": "https://ireland.apollo.olxcdn.com/v1/files/yvhdx9cv5lr53-STDVTLPT/image;s=640x480"
+      },
+      "sellerLink": {
+       "id": "132937"
+      }
+     }
+    },
+    {
+     "node": {
+      "id": "8097693208",
+      "title": "Renault Clio Sport Tourer",
+      "createdAt": "2026-09-26T18:18:39Z",
+      "url": "https://www.standvirtual.com/carros/anuncio/renault-clio-sport-tourer-ID8Q15UY.html",
+      "location": {
+       "city": {
+        "name": "Paredes",
+        "__typename": "AdministrativeLevel"
+       },
+       "region": {
+        "name": "Porto",
+        "__typename": "AdministrativeLevel"
+       },
+       "__typename": "Location"
+      },
+      "price": {
+       "amount": {
+        "units": 8749,
+        "currencyCode": "EUR"
+       }
+      },
+      "parameters": [
+       {
+        "key": "make",
+        "value": "renault"
+       },
+       {
+        "key": "fuel_type",
+        "value": "diesel"
+       },
+       {
+        "key": "gearbox",
+        "value": "manual"
+       },
+       {
+        "key": "mileage",
+        "value": "153000"
+       },
+       {
+        "key": "engine_capacity",
+        "value": "1496"
+       },
+       {
+        "key": "color",
+        "value": "red"
+       },
+       {
+        "key": "transmission",
+        "value": "front-wheel-drive"
+       },
+       {
+        "key": "engine_power",
+        "value": "90"
+       },
+       {
+        "key": "first_registration_year",
+        "value": "2015"
+       },
+       {
+        "key": "model",
+        "value": "clio-sport-tourer"
+       }
+      ],
+      "thumbnail": {
+       "__typename": "Image",
+       "x1": "https://ireland.apollo.olxcdn.com/v1/files/diyvss14gevv2-STDVTLPT/image;s=320x240",
+       "x2": "https://ireland.apollo.olxcdn.com/v1/files/diyvss14gevv2-STDVTLPT/image;s=640x480"
+      },
+      "sellerLink": {
+       "id": "9255798"
+      }
+     }
+    }
+   ]
+  }
+ }
+}
