@@ -56,6 +56,18 @@ run-moto:
 admin:
 	@echo "Админка: http://localhost:8000/admin (вход — ADMIN_USER и ADMIN_PASSWORD из .env)"
 
+# Резервная копия БД сейчас (обычно — сама, раз в сутки), с проверкой восстановления; файлы в ./backups
+backup:
+	$(DC) run --rm --no-deps backup now
+
+# Восстановить БД из копии: make restore FILE=backups/eadh_2026-10-05.dump (текущие данные заменяются)
+restore:
+	@test -n "$(FILE)" || (echo "Укажите FILE=backups/eadh_ГГГГ-ММ-ДД.dump"; exit 1)
+	@read -p "База будет заменена копией $(FILE). Продолжить? [y/N] " answer && [ "$$answer" = "y" ]
+	$(DC) stop scheduler ingestor api_service
+	$(DC) run --rm --no-deps backup restore /backups/$(notdir $(FILE))
+	$(DC) up -d
+
 # Любой паук: make run-spider SPIDER=autoscout24 MAKES=bmw ARGS="-a countries=DE"
 SPIDER ?= otomoto
 ARGS ?=
@@ -122,7 +134,7 @@ define run_tests
 	cd services/api_service && uv run pytest tests $(1)
 endef
 
-.PHONY: run-moto admin test test-warnings test-strict test-coverage test-quiet test-verbose lint e2e probe run-spider \
+.PHONY: run-moto admin backup restore test test-warnings test-strict test-coverage test-quiet test-verbose lint e2e probe run-spider \
 	ml-train ml-status ml-refresh ml-benchmark
 test:
 	@echo "--- 🚀 Запуск всех тестов через pytest ---"
@@ -204,6 +216,8 @@ help:
 	@echo "  run-oto            - Запуск парсера Otomoto в Docker (MAKES=audi,bmw — только эти марки)"
 	@echo "  run-moto           - Мотоциклы otomoto в Docker (весь раздел или MAKES=honda,yamaha)"
 	@echo "  admin              - Адрес админки сбора данных"
+	@echo "  backup             - Резервная копия БД сейчас (с проверкой восстановления), файлы в ./backups"
+	@echo "  restore            - Восстановить БД из копии: FILE=backups/eadh_ГГГГ-ММ-ДД.dump"
 	@echo "  run-oto-local      - Запуск парсера Otomoto локально (Kafka на localhost:9094)"
 	@echo "  run-spider         - Любой паук в Docker: SPIDER=autoscout24 MAKES=bmw ARGS=\"-a countries=DE\""
 	@echo "  probe              - Проверка паука на живом сайте без Kafka: SPIDER=autovit MAKES=dacia"

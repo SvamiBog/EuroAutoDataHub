@@ -24,6 +24,12 @@ class Settings(DatabaseSettings):
     # Управление планировщиком обходов (car_scrapers/scheduler.py) и часовой пояс расписания
     SCHEDULER_URL: str = Field(default="http://scheduler:8001", description="Crawl scheduler control URL")
     CRAWL_TZ: str = Field(default="Europe/Warsaw", description="Crawl schedule time zone")
+    # Резервные копии БД (сервис backup): каталог с last_backup.json
+    BACKUP_DIR: str = Field(default="/backups", description="Database backups directory")
+    BACKUP_STALE_H: float = Field(default=36.0, description="Backup older than this is a problem")
+    # Алерты в Telegram (те же, что у ingestor): админка показывает, настроены ли, и шлёт тестовое сообщение
+    TELEGRAM_BOT_TOKEN: str = Field(default="", description="Telegram bot token")
+    TELEGRAM_CHAT_ID: str = Field(default="", description="Telegram chat id")
 
     @property
     def api_keys(self) -> list[str]:

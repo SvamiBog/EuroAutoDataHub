@@ -3,12 +3,14 @@ import json
 import threading
 import urllib.error
 import urllib.request
-from datetime import datetime, time, timezone
+from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import pytest
 
-from ..scheduler import Scheduler, crawl_commands, next_run, parse_time, start_control_server
+from ..scheduler import (
+    Scheduler, crawl_commands, missed_run, next_run, parse_time, previous_run, start_control_server,
+)
 
 WARSAW = ZoneInfo("Europe/Warsaw")
 
@@ -84,3 +86,47 @@ def test_control_http():
         assert error.value.code == 409
     finally:
         server.shutdown()
+
+
+# --- Пропущенный ночной обход (компьютер был выключен) ---
+
+def test_previous_run_and_missed():
+    at = parse_time("02:00")
+    morning = datetime(2026, 10, 6, 9, 0, tzinfo=WARSAW)
+    assert previous_run(morning, at, WARSAW) == datetime(2026, 10, 6, 2, 0, tzinfo=WARSAW)
+    assert previous_run(datetime(2026, 10, 6, 1, 0, tzinfo=WARSAW), at, WARSAW) == \
+        datetime(2026, 10, 5, 2, 0, tzinfo=WARSAW)
+    # вчерашний вечерний запуск по кнопке не заменяет ночной
+    assert missed_run(datetime(2026, 10, 5, 22, 46, tzinfo=WARSAW), morning, at, WARSAW)
+    assert not missed_run(datetime(2026, 10, 6, 2, 0, 5, tzinfo=WARSAW), morning, at, WARSAW)
+    assert not missed_run(None, morning, at, WARSAW)  # первый старт — без неожиданного обхода
+
+
+def test_state_survives_restart_and_interrupted_run_is_caught_up(tmp_path):
+    state = str(tmp_path / "state" / "scheduler.json")
+    seen = []
+
+    def runner(commands, stop):
+        seen.append(1)
+        return [0]
+
+    first = Scheduler(["otomoto_moto"], [], time(2, 0), WARSAW, runner=runner, state_file=state)
+    assert first.last is None and not first.missed()
+    first.run_once("manual")
+    restarted = Scheduler(["otomoto_moto"], [], time(2, 0), WARSAW, state_file=state)
+    assert restarted.last["trigger"] == "manual" and restarted.last["exit_codes"] == [0]
+    assert restarted.status()["last"]["finished_at"]
+    now = restarted.last["started_at"].astimezone(WARSAW)
+    assert not restarted.missed(now)  # только что обходили
+    assert restarted.missed(now + timedelta(days=1, hours=1))  # следующая ночь прошла без обхода
+
+    # компьютер выключили посреди обхода: при следующем старте обход повторяется
+    def killed(commands, stop):
+        raise SystemExit
+    crashed = Scheduler(["otomoto_moto"], [], time(2, 0), WARSAW, runner=killed, state_file=state)
+    with crashed._lock:
+        crashed.running = {"trigger": "schedule", "started_at": datetime.now(timezone.utc)}
+        crashed._save_state()
+    after_boot = Scheduler(["otomoto_moto"], [], time(2, 0), WARSAW, state_file=state)
+    assert after_boot.interrupted["trigger"] == "schedule" and after_boot.missed()
+    assert after_boot.status()["interrupted"]["started_at"]

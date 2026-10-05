@@ -1,6 +1,7 @@
 """Админка сбора данных: вход, история запусков, детали запуска, запуск по кнопке."""
 import asyncio
-from datetime import timedelta
+import json
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -105,3 +106,85 @@ def test_run_button(client, admin_on):
     status["running"] = {"trigger": "schedule", "started_at": "2026-09-02T00:00:00+00:00"}
     html = client.get("/admin", auth=AUTH).text
     assert "идёт обход" in html and "disabled>Запустить сейчас" in html
+
+
+# --- Проблемы сбора, резервные копии, Telegram ---
+
+def test_problems_from_health_and_resolve(client, admin_on):
+    # incomplete_shards:run-1 из conftest — критичная находка по запуску; день находки должен быть «недавним»
+    async def recent():
+        async with client.factory() as session:
+            from sqlmodel import select
+            from eadh_common.models import Anomaly
+            row = (await session.execute(select(Anomaly).where(Anomaly.rule == "incomplete_shards"))).scalar_one()
+            row.detected_on = datetime.now(timezone.utc).date()
+            await session.commit()
+            return row.id
+    anomaly_id = asyncio.run(recent())
+    html = client.get("/admin", auth=AUTH).text
+    assert "Проблемы сбора" in html and "incomplete_shards message" in html and "критично" in html
+    response = client.post(f"/admin/problems/{anomaly_id}/resolve", auth=AUTH, follow_redirects=False)
+    assert response.status_code == 303
+    html = client.get("/admin", auth=AUTH).text
+    assert "Проблем со сбором нет" in html
+    # решённая — в свёрнутом списке «Решённые» с кнопкой «Вернуть»
+    assert "Решённые за 14 дней (1)" in html and f"/admin/problems/{anomaly_id}/reopen" in html
+    response = client.post(f"/admin/problems/{anomaly_id}/reopen", auth=AUTH, follow_redirects=False)
+    assert response.status_code == 303
+    html = client.get("/admin", auth=AUTH).text
+    assert "Проблем со сбором нет" not in html and "Решённые за" not in html
+    assert f"/admin/problems/{anomaly_id}/resolve" in html
+    assert client.post(f"/admin/problems/{anomaly_id}/reopen", auth=AUTH,
+                       headers={"Origin": "https://evil.example"}).status_code == 403
+    # находки по объявлениям (цены) сюда не относятся
+    assert client.post("/admin/problems/1/resolve", auth=AUTH).status_code == 404
+    assert client.post("/admin/problems/1/reopen", auth=AUTH).status_code == 404
+
+
+def test_scheduler_problems(client, admin_on, monkeypatch):
+    status, _ = admin_on
+    status["last"] = {"trigger": "schedule", "started_at": "2026-09-01T00:00:00+00:00",
+                      "finished_at": "2026-09-01T00:02:00+00:00", "exit_codes": [1]}
+    status["interrupted"] = {"trigger": "schedule", "started_at": "2026-09-02T00:00:00+00:00", "finished_at": None}
+    html = client.get("/admin", auth=AUTH).text
+    assert "завершился с ошибкой (код 1)" in html and "прервался" in html
+
+    async def unavailable():
+        return None
+    monkeypatch.setattr(admin, "scheduler_status", unavailable)
+    html = client.get("/admin", auth=AUTH).text
+    assert "Планировщик не отвечает" in html and "disabled>Запустить сейчас" in html
+
+
+def test_backup_card(client, admin_on, monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "BACKUP_DIR", str(tmp_path))
+    assert "ещё не было" in client.get("/admin", auth=AUTH).text
+    now = datetime.now(timezone.utc)
+    (tmp_path / "eadh_2026-10-05.dump").write_bytes(b"x")
+    status_file = tmp_path / "last_backup.json"
+    status_file.write_text(json.dumps({"ok": True, "file": "eadh_2026-10-05.dump", "size_bytes": 3090966,
+                                       "listings": 18603, "finished_at": now.isoformat()}))
+    html = client.get("/admin", auth=AUTH).text
+    assert "2.9 МБ, восстановление проверено (18 603 объявл.); копий: 1" in html and "устарела" not in html
+    status_file.write_text(json.dumps({"ok": True, "size_bytes": 10, "listings": 1,
+                                       "finished_at": (now - timedelta(days=3)).isoformat()}))
+    assert "устарела" in client.get("/admin", auth=AUTH).text
+    status_file.write_text(json.dumps({"ok": False, "error": "pg_dump: password authentication failed",
+                                       "finished_at": now.isoformat()}))
+    html = client.get("/admin", auth=AUTH).text
+    assert "Резервная копия не сделана: pg_dump: password authentication failed" in html
+
+
+def test_telegram(client, admin_on, monkeypatch):
+    monkeypatch.setattr(settings, "TELEGRAM_BOT_TOKEN", "")
+    assert "не настроены" in client.get("/admin", auth=AUTH).text
+    response = client.post("/admin/telegram-test", auth=AUTH, follow_redirects=False)
+    assert "ok=false" in response.headers["location"]
+
+    sent = []
+    monkeypatch.setattr(settings, "TELEGRAM_BOT_TOKEN", "123:abc")
+    monkeypatch.setattr(settings, "TELEGRAM_CHAT_ID", "42")
+    monkeypatch.setattr(admin, "_telegram_send", lambda text: sent.append(text))
+    assert "Отправить тестовое" in client.get("/admin", auth=AUTH).text
+    response = client.post("/admin/telegram-test", auth=AUTH, follow_redirects=False)
+    assert "ok=true" in response.headers["location"] and len(sent) == 1

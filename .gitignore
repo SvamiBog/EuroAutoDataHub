@@ -126,3 +126,7 @@ project_layout.txt
 
 # make probe: сообщения пробного обхода
 probe_*.jsonl
+
+# Резервные копии БД (make backup, сервис backup)
+backups/*
+!backups/.gitkeep
