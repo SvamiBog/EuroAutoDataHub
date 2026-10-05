@@ -1,6 +1,6 @@
 # services/api_service/app/routers/admin.py
 """Админка сбора данных: история запусков обхода, детали запуска по шардам, состояние планировщика
-и запуск обхода по кнопке.
+и запуск обхода по кнопке; проблемы сбора, резервные копии БД и проверка алертов в Telegram.
 
 Вход — HTTP Basic (ADMIN_USER, ADMIN_PASSWORD); без ADMIN_PASSWORD админка выключена. Состояние
 и запуск — через управление планировщиком (SCHEDULER_URL, car_scrapers/scheduler.py).
@@ -9,8 +9,10 @@ import asyncio
 import json
 import secrets
 import urllib.error
+import urllib.parse
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from html import escape
 from typing import Any, Optional
 from urllib.parse import quote, urlparse
@@ -23,7 +25,7 @@ from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
-from eadh_common.models import CrawlRun, CrawlShard, Listing
+from eadh_common.models import Anomaly, AnomalyStatus, CrawlRun, CrawlShard, Listing
 
 from app.core.config import settings
 from app.db.database import get_session
@@ -32,6 +34,12 @@ basic = HTTPBasic(auto_error=False)
 
 CATEGORY_NAMES = {"car": "легковые", "motorcycle": "мотоциклы"}
 RUNS_ON_PAGE = 50
+# Проблемы сбора: находки «здоровья сбора» и качества по запуску/площадке (не по объявлениям)
+PROBLEM_KINDS = ("crawl_health", "data_quality")
+PROBLEM_ENTITIES = ("run", "source")
+PROBLEM_DAYS = 14
+TRIGGER_NAMES = {"manual": "по кнопке", "schedule": "по расписанию", "catch_up": "догоняющий",
+                 "start": "при старте"}
 
 
 def require_admin(credentials: Optional[HTTPBasicCredentials] = Depends(basic)) -> str:
@@ -82,6 +90,39 @@ async def scheduler_run() -> tuple[bool, str]:
     return False, body.get("error") or f"Планировщик ответил {code}"
 
 
+def backup_status() -> Optional[dict]:
+    """Итог последней резервной копии (ops/backup/backup.sh); None — копий ещё не было."""
+    path = Path(settings.BACKUP_DIR) / "last_backup.json"
+    try:
+        status_ = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    status_["files"] = len(list(Path(settings.BACKUP_DIR).glob("eadh_*.dump")))
+    return status_
+
+
+def _telegram_send(text: str) -> None:
+    data = urllib.parse.urlencode({"chat_id": settings.TELEGRAM_CHAT_ID, "text": text}).encode()
+    request = urllib.request.Request(
+        f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/sendMessage", data=data, method="POST")
+    with urllib.request.urlopen(request, timeout=10) as response:
+        if not json.load(response).get("ok"):
+            raise ValueError("Telegram ответил ok=false")
+
+
+async def telegram_test() -> tuple[bool, str]:
+    if not (settings.TELEGRAM_BOT_TOKEN and settings.TELEGRAM_CHAT_ID):
+        return False, "Telegram не настроен: задайте TELEGRAM_BOT_TOKEN и TELEGRAM_CHAT_ID в .env"
+    try:
+        await asyncio.to_thread(_telegram_send, "✅ EuroAutoDataHub: тестовое сообщение из админки. "
+                                                "Сюда будут приходить отчёты о сборе и алерты.")
+    except urllib.error.HTTPError as error:
+        return False, f"Telegram ответил {error.code}: проверьте токен бота и chat id (и что вы написали боту /start)"
+    except (OSError, ValueError) as error:
+        return False, f"Не удалось отправить: {error}"
+    return True, "Тестовое сообщение отправлено в Telegram"
+
+
 # --- Форматирование ---
 
 def _tz() -> ZoneInfo:
@@ -109,6 +150,12 @@ def _duration(seconds: Optional[float]) -> str:
 
 def _num(value: Optional[Any]) -> str:
     return "—" if value is None else f"{value:,}".replace(",", " ")
+
+
+def _size(value: Optional[int]) -> str:
+    if not value:
+        return "—"
+    return f"{value / 1024 / 1024:.1f} МБ" if value >= 1024 * 1024 else f"{value / 1024:.0f} КБ"
 
 
 def _pct(value: Optional[float]) -> str:
@@ -190,6 +237,10 @@ tr:last-child td{border-bottom:0}td.num,th.num{text-align:right;font-variant-num
 .notice{padding:10px 14px;border-radius:8px;margin-top:16px}
 ul.warnings{margin:6px 0 0;padding-left:18px}
 code{font-size:12px}
+form.inline{display:inline;margin:0}
+button.link{background:none;color:var(--accent);padding:0;font-weight:600}
+td.wrap{white-space:normal;min-width:320px}
+table.problems{min-width:600px}
 """
 
 
@@ -220,19 +271,70 @@ async def admin_home(msg: Optional[str] = None, ok: bool = True, session: AsyncS
         select(Listing.category, func.count()).where(Listing.status == "active").group_by(Listing.category)
     )).all()
     sched = await scheduler_status()
+    since = (datetime.now(timezone.utc) - timedelta(days=PROBLEM_DAYS)).date()
+    open_problems = (await session.execute(
+        select(Anomaly).where(Anomaly.kind.in_(PROBLEM_KINDS), Anomaly.entity_type.in_(PROBLEM_ENTITIES),
+                              Anomaly.status == AnomalyStatus.NEW.value, Anomaly.detected_on >= since)
+        .order_by(Anomaly.detected_on.desc(), Anomaly.id.desc()).limit(30))).scalars().all()
+    backup = backup_status()
 
     # Планировщик
     if sched is None:
         state, can_run = '<span class="badge bad">планировщик недоступен</span>', False
     elif sched.get("running"):
         state = (f'<span class="badge info">идёт обход</span> с {_when(sched["running"]["started_at"])}'
-                 f' ({"по кнопке" if sched["running"]["trigger"] == "manual" else "по расписанию"})')
+                 f' ({TRIGGER_NAMES.get(sched["running"]["trigger"], sched["running"]["trigger"])})')
         can_run = False
     elif sched.get("requested"):
         state, can_run = '<span class="badge info">обход запрошен</span>', False
     else:
         state, can_run = '<span class="badge ok">ожидание</span>', True
     last_ok = next((r for r in runs if _run_state(r)[1] in ("ok", "warn")), None)
+
+    # Резервная копия
+    if backup is None:
+        backup_card = card("Резервная копия", '<span class="badge warn">ещё не было</span>',
+                           "делается раз в сутки ночью; сейчас — make backup")
+    elif not backup.get("ok"):
+        backup_card = card("Резервная копия", '<span class="badge bad">ошибка</span>',
+                           f'{_when(backup.get("finished_at"))}: {escape(str(backup.get("error") or ""))[:200]}')
+    else:
+        stale = datetime.now(timezone.utc) - datetime.fromisoformat(backup["finished_at"]) > \
+            timedelta(hours=settings.BACKUP_STALE_H)
+        backup_card = card("Резервная копия", (f'<span class="badge warn">устарела</span> ' if stale else "")
+                           + _when(backup["finished_at"]),
+                           f'{_size(backup.get("size_bytes"))}, восстановление проверено '
+                           f'({_num(backup.get("listings"))} объявл.); копий: {backup.get("files", 0)}')
+    telegram_on = bool(settings.TELEGRAM_BOT_TOKEN and settings.TELEGRAM_CHAT_ID)
+    telegram_card = card(
+        "Алерты в Telegram",
+        '<span class="badge ok">настроены</span>' if telegram_on else '<span class="badge warn">не настроены</span>',
+        '<form method="post" action="/admin/telegram-test" class="inline"><button class="link" type="submit">'
+        'Отправить тестовое</button></form>' if telegram_on
+        else "отчёты и алерты пишутся только в лог; настройка — docs/LOCAL_RUN.md")
+
+    # Проблемы: находки здоровья сбора и состояние планировщика
+    problems = []
+    if sched is None:
+        problems.append(("critical", None, "Планировщик не отвечает: ежедневные обходы не запустятся. "
+                                           "Проверьте make status и make logs-scheduler.", None))
+    else:
+        last = sched.get("last") or {}
+        failed = [code for code in last.get("exit_codes") or [] if code != 0]
+        if failed:
+            problems.append(("critical", last.get("finished_at"),
+                             f"Обход {_when(last.get('started_at'))} завершился с ошибкой (код {failed[0]}): "
+                             f"см. make logs-scheduler", None))
+        interrupted = sched.get("interrupted")
+        if interrupted and not sched.get("running"):
+            problems.append(("warning", interrupted.get("started_at"),
+                             f"Обход {_when(interrupted.get('started_at'))} прервался (компьютер выключили или "
+                             f"остановили Docker) — он будет запущен заново при старте планировщика", None))
+    if backup is not None and not backup.get("ok"):
+        problems.append(("critical", backup.get("finished_at"), "Резервная копия не сделана: "
+                         + str(backup.get("error") or ""), None))
+    for anomaly in open_problems:
+        problems.append((anomaly.severity, anomaly.detected_on, anomaly.message, anomaly.id))
 
     cards = [
         card("Планировщик", state, escape(", ".join(sched["spiders"])) if sched else ""),
@@ -242,7 +344,25 @@ async def admin_home(msg: Optional[str] = None, ok: bool = True, session: AsyncS
              f"собрано {_num((last_ok.report or {}).get('collected'))}" if last_ok else "запусков ещё не было"),
         card("Активных объявлений", _num(sum(count for _, count in active)),
              escape(", ".join(f"{CATEGORY_NAMES.get(c, c)}: {_num(n)}" for c, n in active)) or "нет"),
+        backup_card,
+        telegram_card,
     ]
+    severity_badge = {"critical": ("bad", "критично"), "warning": ("warn", "внимание"), "info": ("info", "инфо")}
+    problem_rows = []
+    for severity, when, message, anomaly_id in problems:
+        cls, label = severity_badge.get(severity, ("warn", severity))
+        when_text = when.strftime("%d.%m.%Y") if hasattr(when, "strftime") and not isinstance(when, datetime) \
+            else _when(when)
+        action = (f'<form method="post" action="/admin/problems/{anomaly_id}/resolve" class="inline">'
+                  f'<button class="link" type="submit">Решено</button></form>') if anomaly_id else ""
+        problem_rows.append(f'<tr><td><span class="badge {cls}">{label}</span></td><td>{when_text}</td>'
+                            f'<td class="wrap">{escape(str(message))}</td><td>{action}</td></tr>')
+    problems_block = (
+        '<h2>Проблемы сбора</h2><div class="table"><table class="problems"><tbody>' + "".join(problem_rows)
+        + '</tbody></table></div><p class="muted">«Решено» скрывает находку; если условие повторится, '
+          'она появится снова.</p>') if problem_rows else \
+        '<div class="notice ok">Проблем со сбором нет.</div>'
+
     notice = ""
     if msg:
         notice = f'<div class="notice {"ok" if ok else "bad"}">{escape(msg)}</div>'
@@ -276,6 +396,7 @@ async def admin_home(msg: Optional[str] = None, ok: bool = True, session: AsyncS
 <div class="muted">Время — {escape(settings.CRAWL_TZ)}. Страница обновляется сама, пока идёт обход.</div></div>
 <form method="post" action="/admin/run"><button type="submit"{disabled}>Запустить сейчас</button></form></div>
 {notice}<div class="cards">{"".join(cards)}</div>
+{problems_block}
 <h2>Запуски</h2>{table}
 <p class="muted">Последние {RUNS_ON_PAGE} запусков. Подробности — по ссылке на время начала.</p>"""
     running = bool(sched and (sched.get("running") or sched.get("requested"))) or \
@@ -357,4 +478,26 @@ async def admin_start_run(request: Request):
     if not _same_origin(request):
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Запрос не со страницы админки")
     ok, message = await scheduler_run()
+    return RedirectResponse(f"/admin?msg={quote(message)}&ok={str(ok).lower()}", status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/problems/{anomaly_id}/resolve")
+async def admin_resolve_problem(anomaly_id: int, request: Request, session: AsyncSession = Depends(get_session)):
+    if not _same_origin(request):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Запрос не со страницы админки")
+    anomaly = await session.get(Anomaly, anomaly_id)
+    if anomaly is None or anomaly.kind not in PROBLEM_KINDS:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Находка не найдена")
+    anomaly.status = AnomalyStatus.RESOLVED.value
+    anomaly.status_changed_at = datetime.now(timezone.utc)
+    await session.commit()
+    return RedirectResponse(f"/admin?msg={quote('Находка отмечена как решённая')}&ok=true",
+                            status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/telegram-test")
+async def admin_telegram_test(request: Request):
+    if not _same_origin(request):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Запрос не со страницы админки")
+    ok, message = await telegram_test()
     return RedirectResponse(f"/admin?msg={quote(message)}&ok={str(ok).lower()}", status.HTTP_303_SEE_OTHER)

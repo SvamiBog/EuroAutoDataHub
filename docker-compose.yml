@@ -89,11 +89,6 @@ services:
       - POSTGRES_DB=${POSTGRES_DB}
       - POSTGRES_SERVER=db_postgres
       - POSTGRES_PORT=5432
-      # Админка /admin: вход и управление планировщиком
-      - ADMIN_USER=${ADMIN_USER:-admin}
-      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
-      - SCHEDULER_URL=http://scheduler:8001
-      - CRAWL_TZ=${CRAWL_TZ:-Europe/Warsaw}
     volumes:
       - ./services/api_service:/app
     working_dir: /app
@@ -146,8 +141,13 @@ services:
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
       - SCHEDULER_URL=http://scheduler:8001
       - CRAWL_TZ=${CRAWL_TZ:-Europe/Warsaw}
+      # Резервные копии (сервис backup) и проверка алертов в Telegram
+      - BACKUP_DIR=/backups
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
     volumes:
       - ./services/api_service:/app
+      - ./backups:/backups:ro
     working_dir: /app
     restart: unless-stopped
 
@@ -173,6 +173,31 @@ services:
     volumes:
       - ./services/scrapy_spiders/car_scrapers/car_scrapers:/usr/src/app/car_scrapers
       - raw_responses:/data/raw
+      # последний запуск: после выключения компьютера пропущенный ночной обход догоняется
+      - scheduler_state:/data/state
+    restart: unless-stopped
+
+  # Ежедневная резервная копия PostgreSQL в ./backups с проверкой восстановления (ops/backup/backup.sh)
+  backup:
+    image: postgres:15-alpine
+    container_name: db_backup
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    depends_on:
+      db_postgres:
+        condition: service_healthy
+    environment:
+      - PGHOST=db_postgres
+      - PGPORT=5432
+      - PGUSER=${POSTGRES_USER}
+      - PGPASSWORD=${POSTGRES_PASSWORD}
+      - PGDATABASE=${POSTGRES_DB}
+      - BACKUP_AFTER_UTC=${BACKUP_AFTER_UTC:-01:30}
+      - BACKUP_KEEP=${BACKUP_KEEP:-14}
+    volumes:
+      - ./backups:/backups
+      - ./ops/backup/backup.sh:/backup.sh:ro
+    entrypoint: [ "sh", "/backup.sh" ]
+    command: [ "loop" ]
     restart: unless-stopped
 
   # Разовый обход вручную: make run-oto MAKES=audi,bmw
@@ -248,3 +273,4 @@ volumes:
   postgres_data:
   kafka_data:
   raw_responses:
+  scheduler_state:
